@@ -9,20 +9,29 @@
 #include "sema/errors.h"
 #include "utilities/strings.h"
 
-#define SEMA_ERROR(exception)      \
-    error("{}", exception.what()); \
-    errors.push_back(std::unique_ptr<SemaException>(new exception));
+// #define SEMA_ERROR(exception)      \
+//     error("{}", exception.what()); \
+//     errors.push_back(std::unique_ptr<SemaException>(new exception));
 
 namespace lython {
 
 Array<String> python_paths();
 
 struct SemaVisitorTrait {
-    using StmtRet = TypeExpr *;
-    using ExprRet = TypeExpr *;
-    using ModRet  = TypeExpr *;
-    using PatRet  = TypeExpr *;
+    using StmtRet = TypeExpr*;
+    using ExprRet = TypeExpr*;
+    using ModRet  = TypeExpr*;
+    using PatRet  = TypeExpr*;
     using IsConst = std::false_type;
+    using Trace   = std::true_type;
+
+    enum
+    { MaxRecursionDepth = LY_MAX_VISITOR_RECURSION_DEPTH };
+};
+
+struct SemaContext {
+    bool yield = false;
+    bool arrow = false;
 };
 
 /* The semantic analysis (SEM-A) happens after the parsing, the AST can be assumed to be
@@ -90,55 +99,112 @@ struct SemanticAnalyser: BaseVisitor<SemanticAnalyser, false, SemaVisitorTrait> 
     Bindings                              bindings;
     bool                                  forwardpass = false;
     Array<std::unique_ptr<SemaException>> errors;
-    Array<StmtNode *>                     nested;
+    Array<StmtNode*>                      nested;
+    Array<String>                         namespaces;
     Dict<StringRef, bool>                 flags;
     Array<String>                         paths = python_paths();
+
+    // maybe conbine the semacontext with samespace
+    Array<SemaContext> semactx;
+
+    SemaContext& get_context() {
+        static SemaContext global_ctx;
+        if (semactx.size() == 0) {
+            return global_ctx;
+        }
+        return semactx[semactx.size() - 1];
+    }
+
+    bool is_type(TypeExpr* node, int depth, lython::CodeLocation const& loc);
+
+    template <typename T, typename... Args>
+    void sema_error(Node* node, lython::CodeLocation const& loc, Args... args) {
+        errors.push_back(std::unique_ptr<SemaException>(new T(args...)));
+        SemaException* exception = errors[errors.size() - 1].get();
+
+        // Populate location info
+        exception->set_node(node);
+
+        // use the LOC from parent function
+        lython::log(lython::LogLevel::Error, loc, "{}", exception->what());
+    }
+
+#define SEMA_ERROR(expr, exception, ...) sema_error<exception>(expr, LOC, __VA_ARGS__)
 
     public:
     virtual ~SemanticAnalyser() {}
 
-    StmtNode *current_namespace() {
+    StmtNode* current_namespace() {
         if (nested.size() > 0) {
             return nested[nested.size() - 1];
         }
         return nullptr;
     }
 
-    bool typecheck(ExprNode *lhs, TypeExpr *lhs_t, ExprNode *rhs, TypeExpr *rhs_t,
-                   CodeLocation const &loc);
+    Tuple<ClassDef*, FunctionDef*>
+    find_method(TypeExpr* class_type, String const& methodname, int depth);
 
-    bool add_name(ExprNode *expr, ExprNode *value, ExprNode *type);
+    bool typecheck(
+        ExprNode* lhs, TypeExpr* lhs_t, ExprNode* rhs, TypeExpr* rhs_t, CodeLocation const& loc);
 
-    TypeExpr *oneof(Array<TypeExpr *> types) {
+    bool add_name(ExprNode* expr, ExprNode* value, ExprNode* type);
+
+    String operator_function(TypeExpr* expr_t, StringRef op);
+
+    Arrow* functiondef_arrow(FunctionDef* n, StmtNode* class_t, int depth);
+
+    String generate_function_name(FunctionDef* n);
+
+    Arrow* get_arrow(ExprNode* fun, ExprNode* type, int depth, int& offset, ClassDef*& cls);
+
+    TypeExpr* oneof(Array<TypeExpr*> types) {
         if (types.size() > 0) {
             return types[0];
         }
         return nullptr;
     }
 
-    TypeExpr *module(Module *stmt, int depth) {
-        // TODO: Add a forward pass that simply add functions & variables
-        // to the context so the SEMA can look everything up
-        exec<TypeExpr *>(stmt->body, depth);
-        return nullptr;
-    };
+    Node* load_name(Name_t* variable);
 
-    ExprNode *make_ref(Node *parent, String const &name) {
-        auto ref   = parent->new_object<Name>();
-        ref->id    = name;
-        ref->varid = bindings.get_varid(ref->id);
+    Name* make_ref(Node* parent, String const& name, int varid = -1) {
+        return make_ref(parent, StringRef(name), varid);
+    }
+
+    void record_attributes(ClassDef*               n,
+                           Array<StmtNode*> const& body,
+                           Array<StmtNode*>&       methods,
+                           FunctionDef**           ctor,
+                           int                     depth);
+
+    Name* make_ref(Node* parent, StringRef const& name, int varid = -1) {
+        auto ref = parent->new_object<Name>();
+        ref->id  = name;
+
+        if (varid == -1) {
+            ref->varid = bindings.get_varid(ref->id);
+            assert(ref->varid != -1, "Should be able to find the name we are refering to");
+        } else {
+            ref->varid = varid;
+        }
+
+        ref->ctx     = ExprContext::Load;
+        ref->size    = int(bindings.bindings.size());
+        ref->dynamic = bindings.is_dynamic(ref->varid);
         return ref;
     }
 
-    TypeExpr *attribute_assign(Attribute *n, int depth, TypeExpr *expected);
+    ClassDef* get_class(ExprNode* classref, int depth);
+    TypeExpr* resolve_variable(ExprNode* node);
 
-    void add_arguments(Arguments &args, Arrow *, ClassDef *def, int);
+    TypeExpr* attribute_assign(Attribute* n, int depth, TypeExpr* expected);
 
-#define FUNCTION_GEN(name, fun) virtual TypeExpr *fun(name *n, int depth);
+    void add_arguments(Arguments& args, Arrow*, ClassDef* def, int);
+
+#define FUNCTION_GEN(name, fun) virtual TypeExpr* fun(name* n, int depth);
 
 #define X(name, _)
 #define SSECTION(name)
-#define MOD(name, fun)
+#define MOD(name, fun)   FUNCTION_GEN(name, fun)
 #define EXPR(name, fun)  FUNCTION_GEN(name, fun)
 #define STMT(name, fun)  FUNCTION_GEN(name, fun)
 #define MATCH(name, fun) FUNCTION_GEN(name, fun)
@@ -155,6 +221,6 @@ struct SemanticAnalyser: BaseVisitor<SemanticAnalyser, false, SemaVisitorTrait> 
 #undef FUNCTION_GEN
 };
 
-} // namespace lython
+}  // namespace lython
 
 #endif

@@ -2,18 +2,34 @@
 #define LYTHON_AST_VISITOR_HEADER
 
 #include "ast/nodes.h"
+#include "dependencies/coz_wrap.h"
 #include "logging/logging.h"
+
+#ifndef LY_MAX_VISITOR_RECURSION_DEPTH
+#    define LY_MAX_VISITOR_RECURSION_DEPTH 256
+#endif
 
 namespace lython {
 
 NEW_EXCEPTION(NullPointerError)
 
 struct DefaultVisitorTrait {
-    using StmtRet = StmtNode *;
-    using ExprRet = ExprNode *;
-    using ModRet  = ModNode *;
-    using PatRet  = Pattern *;
+    using Trace               = std::true_type;
+    using LimitRecursionDepth = std::true_type;
+    using StmtRet             = StmtNode*;
+    using ExprRet             = ExprNode*;
+    using ModRet              = ModNode*;
+    using PatRet              = Pattern*;
+
+    enum
+    { MaxRecursionDepth = LY_MAX_VISITOR_RECURSION_DEPTH };
 };
+
+#ifdef __linux__
+#    define LYTHON_INLINE
+#else
+#    define LYTHON_INLINE __forceinline
+#endif
 
 /*!
  * Visitor implemented using static polymorphism.
@@ -28,7 +44,7 @@ struct DefaultVisitorTrait {
  */
 template <typename Implementation, bool isConst, typename VisitorTrait, typename... Args>
 struct BaseVisitor {
-
+    using Trace   = typename VisitorTrait::Trace;
     using StmtRet = typename VisitorTrait::StmtRet;
     using ExprRet = typename VisitorTrait::ExprRet;
     using ModRet  = typename VisitorTrait::ModRet;
@@ -65,10 +81,10 @@ struct BaseVisitor {
 #undef TYPE_GEN
 
     template <typename U, typename T>
-    Array<U> exec(Array<T> &body, int depth, Args... args) {
+    Array<U> exec(Array<T>& body, int depth, Args... args) {
         int      k = 0;
         Array<U> types;
-        for (auto &stmt: body) {
+        for (auto& stmt: body) {
             types.push_back(exec(stmt, depth, (args)...));
             k += 1;
         }
@@ -76,7 +92,7 @@ struct BaseVisitor {
     };
 
     template <typename U, typename T>
-    Optional<U> exec(Optional<T> &maybe, int depth, Args... args) {
+    Optional<U> exec(Optional<T>& maybe, int depth, Args... args) {
         if (maybe.has_value()) {
             return some<U>(exec(maybe.value(), depth, (args)...));
         }
@@ -84,23 +100,23 @@ struct BaseVisitor {
     };
 
     template <typename T>
-    T exec(Node_t *n, Args... args) {
+    T exec(Node_t* n, int depth, Args... args) {
         switch (n->family()) {
-        case NodeFamily::Module:
-            return exec(reinterpret_cast<ModNode_t *>(n), 0, (args)...);
-        case NodeFamily::Statement:
-            return exec(reinterpret_cast<StmtNode_t *>(n), 0, (args)...);
+        case NodeFamily::Module: return exec(reinterpret_cast<ModNode_t*>(n), depth, (args)...);
+        case NodeFamily::Statement: return exec(reinterpret_cast<StmtNode_t*>(n), depth, (args)...);
         case NodeFamily::Expression:
-            return exec(reinterpret_cast<ExprNode_t *>(n), 0, (args)...);
-        case NodeFamily::Pattern:
-            return exec(reinterpret_cast<Pattern_t *>(n), 0, (args)...);
+            return exec(reinterpret_cast<ExprNode_t*>(n), depth, (args)...);
+        case NodeFamily::Pattern: return exec(reinterpret_cast<Pattern_t*>(n), depth, (args)...);
         }
         return T();
     }
 
-    ModRet exec(ModNode_t *mod, int depth, Args... args) {
+    ModRet exec(ModNode_t* mod, int depth, Args... args) {
         // clang-format off
-        // trace(depth, "{}", mod->kind);  
+        // trace(depth, "{}", mod->kind);
+
+        check_depth(depth);
+
         switch (mod->kind) {
 
             #define X(name, _)
@@ -127,10 +143,13 @@ struct BaseVisitor {
         return ModRet();
     }
 
-    PatRet exec(Pattern_t *pat, int depth, Args... args) {
+    PatRet exec(Pattern_t* pat, int depth, Args... args) {
         if (!pat) {
             return PatRet();
         }
+
+        check_depth(depth);
+
         // trace(depth, "{}", pat->kind);
         // clang-format off
         switch (pat->kind) {
@@ -158,17 +177,20 @@ struct BaseVisitor {
         return PatRet();
     }
 
-    ExprRet exec(ExprNode_t *expr, int depth, Args... args) {
+    ExprRet exec(ExprNode_t* expr, int depth, Args... args) {
         if (!expr) {
             return ExprRet();
         }
+
+        check_depth(depth);
+
         // trace(depth, "{}", expr->kind);
         // clang-format off
         switch (expr->kind) {
 
             #define X(name, _)
             #define PASS(a, b)
-            #define SSECTION(_) 
+            #define SSECTION(_)
             #define EXPR(name, fun)\
                 case NodeKind::name: {\
                     name##_t* node = reinterpret_cast<name##_t*>(expr);\
@@ -189,11 +211,19 @@ struct BaseVisitor {
         return ExprRet();
     }
 
-    StmtRet exec(StmtNode_t *stmt, int depth, Args... args) {
+    void check_depth(int depth) {
+        if (VisitorTrait::MaxRecursionDepth > 0 && depth > VisitorTrait::MaxRecursionDepth) {
+            throw std::runtime_error("");
+        }
+    }
+
+    StmtRet exec(StmtNode_t* stmt, int depth, Args... args) {
         if (!stmt) {
+            debug("Null statement");
             return StmtRet();
         }
-        // trace(depth, "{}", stmt->kind);
+
+        check_depth(depth);
 
         // clang-format off
         switch (stmt->kind) {
@@ -221,10 +251,12 @@ struct BaseVisitor {
         return StmtRet();
     }
 
-#define FUNCTION_GEN(name, fun, rtype)                                           \
-    rtype fun(name##_t *node, int depth, Args... args) {                         \
-        trace(depth, #name);                                                     \
-        return static_cast<Implementation *>(this)->fun(node, depth, (args)...); \
+#define FUNCTION_GEN(name, fun, rtype)                                          \
+    LYTHON_INLINE rtype fun(name##_t* node, int depth, Args... args) {          \
+        if (Trace::value) {                                                     \
+            trace(depth, #name);                                                \
+        }                                                                       \
+        return static_cast<Implementation*>(this)->fun(node, depth, (args)...); \
     }
 
 #define X(name, _)
@@ -245,7 +277,7 @@ struct BaseVisitor {
 
 #undef FUNCTION_GEN
 
-}; // namespace lython
+};  // namespace lython
 
-} // namespace lython
+}  // namespace lython
 #endif

@@ -7,3 +7,24 @@
 [submodule "dependencies/pybind11"]
 	path = dependencies/pybind11
 	url = https://github.com/pybind/pybind11
+[submodule "dependencies/mimalloc"]
+	path = dependencies/mimalloc
+	url = https://github.com/microsoft/mimalloc.git
+[submodule "dependencies/fpm"]
+	path = dependencies/fpm
+	url = https://github.com/MikeLankamp/fpm.git
+[submodule "dependencies/Imath"]
+	path = dependencies/Imath
+	url = https://github.com/AcademySoftwareFoundation/Imath
+[submodule "dependencies/argparse"]
+	path = dependencies/argparse
+	url = https://github.com/p-ranav/argparse.git
+[submodule "dependencies/libtomcrypt"]
+	path = dependencies/libtomcrypt
+	url = https://github.com/libtom/libtomcrypt.git
+[submodule "dependencies/cpython"]
+	path = dependencies/cpython
+	url = https://github.com/python/cpython.git
+[submodule "dependencies/xxHash"]
+	path = dependencies/xxHash
+	url = https://github.com/Cyan4973/xxHash.git

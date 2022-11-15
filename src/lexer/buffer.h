@@ -1,10 +1,12 @@
 #pragma once
 
-#include <cstdio>
 #include <string>
 
+#include "dependencies/coz_wrap.h"
+#include "dependencies/fmt.h"
+
 #include "dtypes.h"
-#include "logging/logging.h"
+#include "logging/exceptions.h"
 
 /*
  *  Buffers are special reader that keep track of current line/col and indent level
@@ -19,7 +21,7 @@ namespace lython {
 class AbstractBuffer {
     public:
     virtual char          getc()      = 0;
-    virtual const String &file_name() = 0;
+    virtual const String& file_name() = 0;
 
     AbstractBuffer() {}
 
@@ -27,6 +29,8 @@ class AbstractBuffer {
 
     void init() { _next_char = getc(); }
 
+    // TODO: add a hash digest compute
+    // so we can hash files with little overhead
     void consume() {
         if (_next_char == EOF)
             return;
@@ -83,55 +87,41 @@ class AbstractBuffer {
 class FileError: public Exception {
     public:
     template <typename... Args>
-    FileError(const char *fmt, const Args &...args): Exception(fmt, "FileError", args...) {}
+    FileError(FmtStr fmt, const Args&... args): Exception(fmt, "FileError", args...) {}
 };
 
-String read_file(String const &name);
+String read_file(String const& name);
 
 class FileBuffer: public AbstractBuffer {
     public:
-    FileBuffer(String const &name);
+    FileBuffer(String const& name);
 
     ~FileBuffer() override;
 
-    char getc() override { return char(::getc(_file)); }
+    char getc() override {
+        COZ_BEGIN("T::FileBuffer::getc");
 
-    const String &file_name() override { return _file_name; }
+        char c = char(::getc(_file));
 
-    void reset() override {
-        fseek(_file, 0, SEEK_SET);
-        AbstractBuffer::reset();
+        COZ_PROGRESS_NAMED("FileBuffer::getc");
+        COZ_END("T::FileBuffer::getc");
+        return c;
     }
 
-    String getline(int start_line, int end_line = -1) override {
-        fpos_t pos;
-        fgetpos(_file, &pos);
-        //--
+    const String& file_name() override { return _file_name; }
 
-        String result;
-        result.reserve(128);
-        fseek(_file, start_line, SEEK_SET);
+    void reset() override;
 
-        char c = fgetc(_file);
-
-        while (c != '\n') {
-            result.push_back(c);
-            c = fgetc(_file);
-        }
-
-        // --
-        fsetpos(_file, &pos);
-        return result;
-    }
+    String getline(int start_line, int end_line = -1) override;
 
     private:
     String _file_name;
-    FILE * _file{nullptr};
+    FILE*  _file{nullptr};
 };
 
 class StringBuffer: public AbstractBuffer {
     public:
-    StringBuffer(String code, String const &file = "c++ string"):
+    StringBuffer(String code, String const& file = "c++ string"):
         _code(std::move(code)), _file_name(file) {
         init();
     }
@@ -146,7 +136,7 @@ class StringBuffer: public AbstractBuffer {
 
     ~StringBuffer() override;
 
-    const String &file_name() override { return _file_name; }
+    const String& file_name() override { return _file_name; }
 
     private:
     uint32       _pos{0};
@@ -188,7 +178,7 @@ class StringBuffer: public AbstractBuffer {
         } while (c);
     }
 
-    void load_code(const std::string &code) {
+    void load_code(const std::string& code) {
         _code = code;
         _pos  = 0;
     }
@@ -201,7 +191,7 @@ class ConsoleBuffer: public AbstractBuffer {
 
     char getc() override { return char(std::getchar()); }
 
-    const String &file_name() override { return _file_name; }
+    const String& file_name() override { return _file_name; }
 
     ~ConsoleBuffer() override;
 
@@ -209,4 +199,4 @@ class ConsoleBuffer: public AbstractBuffer {
     const String _file_name;
 };
 
-} // namespace lython
+}  // namespace lython

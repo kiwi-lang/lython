@@ -11,6 +11,7 @@
 
 #include <sstream>
 
+#include "dependencies/xx_hash.h"
 #include "utilities/allocator.h"
 
 #ifdef __linux__
@@ -34,8 +35,17 @@ using int16  = std::int16_t;
 using uint8 = std::uint8_t;
 using int8  = std::int8_t;
 
+// using float8 = ;
+// using float16 = ;
+// using float24 = ;
 using float32 = float;
 using float64 = double;
+
+// using bfloat16 = ;
+// using float40 = ;
+// using float80 = ;
+// using float128 = ;
+// using float256 = ;
 
 using uchar = unsigned char;
 
@@ -53,7 +63,7 @@ using String = std::basic_string<char, std::char_traits<char>, AllocatorCPU<char
 using StringStream = std::basic_stringstream<char, std::char_traits<char>, AllocatorCPU<char>>;
 
 using StringView = std::string_view;
-} // namespace lython
+}  // namespace lython
 
 // ------------
 namespace std {
@@ -63,15 +73,22 @@ template <typename Char, typename Allocator>
 struct hash<std::basic_string<Char, std::char_traits<Char>, Allocator>> {
     using Key = std::basic_string<Char, std::char_traits<Char>, Allocator>;
 
-    std::size_t operator()(Key const &k) const noexcept {
-        auto a = std::hash<std::string>();
-        // FIXME: find a way to reuse the string hashing without transforming the string
-        return a(std::string(k.c_str()));
+    std::size_t operator()(Key const& k) const noexcept {
+        return lython::xx_hash_3((void*)k.data(), k.length());
+
+        // #ifdef __linux__
+        //         return std::_Hash_impl::hash(k.data(), k.length() * sizeof(Char));
+        // #else
+        //         // FIXME: find a way to reuse the string hashing without transforming the string
+
+        //         auto a = std::hash<std::string>();
+        //         return a(std::string(k.c_str()));
+        // #endif
     }
 };
 //*/
 
-} // namespace std
+}  // namespace std
 
 // ---------------
 namespace lython {
@@ -96,7 +113,7 @@ using Set = std::unordered_set<V, std::hash<V>, std::equal_to<V>, AllocatorCPU<V
 
 class LythonException: public std::exception {};
 
-} // namespace lython
+}  // namespace lython
 
 #if __linux__
 #    define NOTHROW _GLIBCXX_TXN_SAFE_DYN _GLIBCXX_NOTHROW

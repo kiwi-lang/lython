@@ -49,6 +49,7 @@ enum class NodeKind : int8_t
     EXPR(ClassType, classtype)      \
     EXPR(SetType, settype)          \
     EXPR(BuiltinType, builtintype)  \
+    EXPR(Comment, comment)          \
     SECTION(EXPR_END)               \
     SECTION(MODULE_START)               \
     MOD(Module, module)                 \
@@ -57,6 +58,7 @@ enum class NodeKind : int8_t
     MOD(FunctionType, functiontype)     \
     SECTION(MODULE_END)                 \
     SECTION(STMT_START)                 \
+    STMT(InvalidStatement, invalidstmt) \
     STMT(FunctionDef, functiondef)      \
     STMT(ClassDef, classdef)            \
     STMT(Return, returnstmt)            \

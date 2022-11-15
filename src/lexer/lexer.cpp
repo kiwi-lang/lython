@@ -1,91 +1,71 @@
 #include <spdlog/fmt/bundled/core.h>
 
 #include "lexer.h"
+#include "unlex.h"
 #include "utilities/strings.h"
 
 namespace lython {
 
-Dict<String, OpConfig> const &default_precedence() {
+Dict<String, OpConfig> const& default_precedence() {
+    // clang-format off
     static Dict<String, OpConfig> val = {
         // Predecence, Left Associative, is_binary, is_bool, can_be_unary, kind
         // Arithmetic
-        {"+", {20, true, tok_operator, BinaryOperator::Add, UnaryOperator::UAdd}},
-        {"-", {20, true, tok_operator, BinaryOperator::Sub, UnaryOperator::USub}},
-        {"%", {10, true, tok_operator, BinaryOperator::Mod}},
-        {"*", {30, true, tok_operator, BinaryOperator::Mult}},
-        {"**", {40, true, tok_operator, BinaryOperator::Pow}},
-        {"/", {30, true, tok_operator, BinaryOperator::Div}},
-        {"//", {30, true, tok_operator, BinaryOperator::FloorDiv}},
-        {".*", {20, true, tok_operator, BinaryOperator::EltMult}},
-        {"./", {20, true, tok_operator, BinaryOperator::EltDiv}},
+        {"+",       {20, true , tok_operator, BinaryOperator::Add, UnaryOperator::UAdd}},
+        {"-",       {20, true , tok_operator, BinaryOperator::Sub, UnaryOperator::USub}},
+        {"%",       {10, true , tok_operator, BinaryOperator::Mod}},
+        {"*",       {30, true , tok_operator, BinaryOperator::Mult}},
+        {"**",      {40, true , tok_operator, BinaryOperator::Pow}},
+        {"/",       {30, true , tok_operator, BinaryOperator::Div}},
+        {"//",      {30, true , tok_operator, BinaryOperator::FloorDiv}},
+        {".*",      {20, true , tok_operator, BinaryOperator::EltMult}},
+        {"./",      {20, true , tok_operator, BinaryOperator::EltDiv}},
         //*/ Shorthand
-        {"+=", {50, true, tok_augassign, BinaryOperator::Add}},
-        {"-=", {50, true, tok_augassign, BinaryOperator::Sub}},
-        {"*=", {50, true, tok_augassign, BinaryOperator::Mult}},
-        {"/=", {50, true, tok_augassign, BinaryOperator::Div}},
-        {"%=", {50, true, tok_augassign, BinaryOperator::Mod}},
-        {"**=", {50, true, tok_augassign, BinaryOperator::Pow}},
-        {"//=", {50, true, tok_augassign, BinaryOperator::FloorDiv}},
+        {"+=",      {50, true , tok_augassign, BinaryOperator::Add}},
+        {"-=",      {50, true , tok_augassign, BinaryOperator::Sub}},
+        {"*=",      {50, true , tok_augassign, BinaryOperator::Mult}},
+        {"/=",      {50, true , tok_augassign, BinaryOperator::Div}},
+        {"%=",      {50, true , tok_augassign, BinaryOperator::Mod}},
+        {"**=",     {50, true , tok_augassign, BinaryOperator::Pow}},
+        {"//=",     {50, true , tok_augassign, BinaryOperator::FloorDiv}},
         //*/
         // Assignment
-        {"=", {50, true, tok_assign}},
+        {"=",       {50, true , tok_assign}},
         // Logic
-        {"~", {40, false, tok_operator, BinaryOperator::None, UnaryOperator::Invert}},
-        {"<<", {40, false, tok_operator, BinaryOperator::LShift}},
-        {">>", {40, false, tok_operator, BinaryOperator::RShift}},
-        {"^", {40, false, tok_operator, BinaryOperator::BitXor}},
-        {"&", {40, true, tok_operator, BinaryOperator::BitAnd}},
-        {"and",
-         {40, true, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::And}},
-        {"|", {40, true, tok_operator, BinaryOperator::BitOr}},
-        {"or",
-         {40, true, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::Or}},
-        {"!", {40, true, tok_operator, BinaryOperator::None, UnaryOperator::Not}},
-        {"not", {40, true, tok_operator, BinaryOperator::None, UnaryOperator::Not}},
+        {"~",       {40, false, tok_operator, BinaryOperator::None, UnaryOperator::Invert}},
+        {"<<",      {40, false, tok_operator, BinaryOperator::LShift}},
+        {">>",      {40, false, tok_operator, BinaryOperator::RShift}},
+        {"^",       {40, false, tok_operator, BinaryOperator::BitXor}},
+        {"&",       {40, true , tok_operator, BinaryOperator::BitAnd}},
+        {"and",     {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::And}},
+        {"|",       {40, true , tok_operator, BinaryOperator::BitOr}},
+        {"or",      {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::Or}},
+        {"!",       {40, true , tok_operator, BinaryOperator::None, UnaryOperator::Not}},
+        {"not",     {40, true , tok_operator, BinaryOperator::None, UnaryOperator::Not}},
         // Comparison
-        {"==",
-         {40, true, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None,
-          CmpOperator::Eq}},
-        {"!=",
-         {40, true, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None,
-          CmpOperator::NotEq}},
-        {">=",
-         {40, true, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None,
-          CmpOperator::GtE}},
-        {"<=",
-         {40, true, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None,
-          CmpOperator::LtE}},
-        {">",
-         {40, true, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None,
-          CmpOperator::Gt}},
-        {"<",
-         {40, true, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None,
-          CmpOperator::Lt}},
+        {"==",      {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::Eq}},
+        {"!=",      {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::NotEq}},
+        {">=",      {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::GtE}},
+        {"<=",      {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::LtE}},
+        {">",       {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::Gt}},
+        {"<",       {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::Lt}},
         // membership
-        {"in",
-         {40, false, tok_in, BinaryOperator::None, UnaryOperator::None, BoolOperator::None,
-          CmpOperator::In}},
-        {"not in",
-         {40, false, tok_in, BinaryOperator::None, UnaryOperator::None, BoolOperator::None,
-          CmpOperator::NotIn}},
+        {"in",      {40, false, tok_in      , BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::In}},
+        {"not in",  {40, false, tok_in      , BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::NotIn}},
         // identity
-        {"is",
-         {40, false, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None,
-          CmpOperator::Is}},
-        {"is not",
-         {40, false, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None,
-          CmpOperator::IsNot}},
+        {"is",      {40, false, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::Is}},
+        {"is not",  {40, false, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::IsNot}},
         // Not an operator but we use same data structure for parsing
-        {"->", {10, false, tok_arrow}},
-        {":=", {10, false, tok_walrus}},
-        {":", {10, false, (TokenType)':'}},
-        // Self lookup
-        {".", {60, true, tok_dot}},
+        {"->",      {10, false, tok_arrow}},
+        {":=",      {10, false, tok_walrus}},
+        {":",       {10, false, (TokenType)':'}},
+        {".",       {60, true , tok_dot}},
     };
+    // clang-format on
     return val;
 }
 
-std::ostream &AbstractLexer::debug_print(std::ostream &out) {
+std::ostream& AbstractLexer::debug_print(std::ostream& out) {
 
     Token t = next_token();
     int   k = 1;
@@ -96,29 +76,33 @@ std::ostream &AbstractLexer::debug_print(std::ostream &out) {
     } while ((t = next_token()));
 
     out << fmt::format("{:4}", k) << "  ";
-    t.debug_print(out) << std::endl; // eof
+    t.debug_print(out) << std::endl;  // eof
 
     return out;
 }
 
 // print out tokens as they were inputed
-std::ostream &AbstractLexer::print(std::ostream &out) {
+std::ostream& AbstractLexer::print(std::ostream& out) {
 
     Token t = next_token();
+    Unlex unlex;
+
     do {
-        t.print(out);
+        unlex.format(out, t);
     } while ((t = next_token()));
 
     // send eof for reset
-    t.print(out);
+    unlex.format(out, t);
 
     return out;
 }
-Token const &Lexer::next_token() {
+Token const& Lexer::next_token() {
+    _count += 1;
+
     // if we peeked ahead return that one
-    if (_buffered_token) {
-        _buffered_token = false;
-        _token          = _buffer;
+    if (_buffer.size() > 0) {
+        _token = _buffer[_buffer.size() - 1];
+        _buffer.pop_back();
         return _token;
     }
 
@@ -162,9 +146,61 @@ Token const &Lexer::next_token() {
         return make_token(tok_indent);
     }
 
+// only broadcast desindent on actual code
+// comments have no impacts on our indentation level
+//
+// Doing it here brings another problem:
+//  - now comment indentation is going to change
+//    this could be a good thing as it forces comment
+//    to be at the "right" indentation
+//
+// but if you write a comment after a class its indentation is going to be wrong
+//
+//  class X:
+//  # comment
+//      def __init__(self):
+//          ...
+//
+// becomes
+//
+//  class X:
+//      # comment
+//      def __init__(self):
+//          ...
+//
+//  and
+//
+//  for i in range(10):
+//      ...
+//  # comment
+//
+// becomes
+//
+//  for i in range(10):
+//      ...
+//      # comment
+//
+//  1) is ok, the comment was written inside a statement block
+//  2) is problematic, the comment was written outside the block
+//  but we cannot tell until we reached a desindent block
+//  which happens AFTER the comment
+//
+// SOLUTION: make the parser associate comment with the comming statement
+#define FORCE_COMMENT_INDENT(X) X
+
+    bool desindent_comment = _cindent < _oindent && c == tok_comment;
+
     if (_cindent < _oindent) {
-        _oindent -= LYTHON_INDENT;
-        return make_token(tok_desindent);
+        // TODO: this behaviour is not good for the Unlexer
+        // but it is fine for the parser
+        if (FORCE_COMMENT_INDENT(c != tok_comment)) {
+            _oindent -= LYTHON_INDENT;
+            return make_token(tok_desindent);
+        } else {
+            // reset current indent to match previous indentation level
+            // because comment indentation do not matter
+            _cindent = _oindent;
+        }
     }
 
     // remove white space
@@ -192,7 +228,7 @@ Token const &Lexer::next_token() {
         {
             auto result = default_precedence().find(identifier);
             if (result != default_precedence().end()) {
-                OpConfig const &conf = result->second;
+                OpConfig const& conf = result->second;
                 Token           tok  = dummy();
 
                 // combine is not & not in right now
@@ -210,8 +246,7 @@ Token const &Lexer::next_token() {
                     return make_token(conf.type, "not in");
                 }
 
-                _buffered_token = true;
-                _buffer         = tok;
+                _buffer.push_back(tok);
                 return make_token(conf.type, identifier);
             }
         }
@@ -249,7 +284,7 @@ Token const &Lexer::next_token() {
                 op          = strip(op);
                 auto result = default_precedence().find(op);
                 if (result != default_precedence().end()) {
-                    OpConfig const &conf = result->second;
+                    OpConfig const& conf = result->second;
                     return make_token(conf.type, op);
                 }
             }
@@ -297,16 +332,13 @@ strings:
     // ---------------
     // upper/lower and combinaison are available
     // fr & rf & br & rb
-    if (c == 'f' && peek() == '"') {
-    }
+    if (c == 'f' && peek() == '"') {}
 
     // Raw string
-    if (c == 'r' && peek() == '"') {
-    }
+    if (c == 'r' && peek() == '"') {}
 
     // byte string
-    if (c == 'b' && peek() == '"') {
-    }
+    if (c == 'b' && peek() == '"') {}
 
     // Regular string
     // --------------
@@ -329,12 +361,13 @@ strings:
         }
 
         if (tok == tok_string)
-            while ((c = nextc()) != '"') {
+            while ((c = nextc()) != '"' && c != EOF) {
                 str.push_back(c);
             }
         else {
-            while (true) {
+            while (c != EOF) {
                 c = nextc();
+
                 if (c == '"') {
                     c2 = nextc();
                     if (c2 == '"') {
@@ -359,11 +392,31 @@ strings:
         return make_token(tok, str);
     }
 
+    c = peek();
+    if (c == tok_comment) {
+        String comment;
+        comment.reserve(128);
+
+        // eat the comment token
+        c = nextc();
+
+        // eat all characters until the newline
+        while (c != '\n' && c != EOF) {
+            comment.push_back(c);
+            c = nextc();
+        };
+
+        return make_token(tok_comment, comment);
+    }
+
     // get next char
     c = peek();
     consume();
 
-    return make_token(c);
+    if (c > 0) {
+        return make_token(c);
+    }
+    return make_token(tok_incorrect);
 }
 
-} // namespace lython
+}  // namespace lython

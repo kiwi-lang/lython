@@ -1,4 +1,5 @@
 {
+  "files.eol": "\n",
   "C_Cpp_Runner.cCompilerPath": "/bin/gcc",
   "C_Cpp_Runner.debuggerPath": "/bin/gdb",
   "C_Cpp_Runner.makePath": "/bin/make",
@@ -109,7 +110,20 @@
     "complex": "cpp",
     "valarray": "cpp",
     "ranges": "cpp",
-    "filesystem": "cpp"
+    "filesystem": "cpp",
+    "stack": "cpp",
+    "*.inc": "cpp",
+    "any": "cpp",
+    "cfenv": "cpp",
+    "csignal": "cpp",
+    "xxh_x86dispatch.c": "cpp"
   },
-  "python.formatting.provider": "black"
+  "python.formatting.provider": "black",
+  "files.exclude": {
+    "**/.git": false
+  },
+  "cmake.ctestArgs": [
+    "--timeout",
+    "10"
+  ],
 }

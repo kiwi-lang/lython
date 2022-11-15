@@ -17,6 +17,7 @@ jobs:
 
       - name: Format
         run: |
+          clang-format --version
           find src -name '*.cpp'|xargs clang-format --dry-run --Werror --style=file
           find src -name '*.h'|xargs clang-format --dry-run --Werror --style=file
 
@@ -34,10 +35,10 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install gcc-10 g++-10 clang-tidy-12 llvm-12
+          sudo apt-get install gcc-11 g++-11 clang-tidy-12 llvm-12
           sudo ln -f /usr/bin/clang-tidy-12 /usr/bin/clang-tidy
           sudo ln -f /usr/bin/llvm-symbolizer-12 /usr/bin/llvm-symbolizer
-          sudo ln -f /usr/bin/gcov-10 /usr/bin/gcov
+          sudo ln -f /usr/bin/gcov-11 /usr/bin/gcov
           pip install gcovr
           mkdir -p build
 
@@ -45,10 +46,10 @@ jobs:
         run: |
           git submodule update --init
           cd build
-          GCOV=gcov-10 CC=gcc-10 CXX=g++-10 cmake  ..
+          GCOV=gcov-11 CC=gcc-11 CXX=g++-11 cmake  ..
           make enable-debug
           make enable-test
-        
+
       - name: Compile
         run: |
           cd build
@@ -66,7 +67,7 @@ jobs:
           cd build
           make coverage
           cd coverage
-          bash ../../scripts/extract_coverage.bash coverage.xml coverage.csv template/badge.svg badge.svg
+          python ../../scripts/parse_coverage.py --report coverage.xml --csv coverage.csv --template template/badge.svg --target badge.svg
 
       - name: Upload coverage to Codecov
         if: always()

@@ -7,9 +7,9 @@ namespace lython {
 
 using TypeExpr = ExprNode;
 
-ExprNode *False();
-ExprNode *True();
-ExprNode *none();
+ExprNode* False();
+ExprNode* True();
+ExprNode* None();
 
 #define BUILTIN_TYPES(TYPE) \
     TYPE(Type)              \
@@ -28,12 +28,12 @@ ExprNode *none();
     TYPE(bool)              \
     TYPE(Module)
 
-#define TYPE(name) TypeExpr *name##_t();
+#define TYPE(name) TypeExpr* name##_t();
 
 BUILTIN_TYPES(TYPE)
 
 #undef TYPE
 
-} // namespace lython
+}  // namespace lython
 
 #endif

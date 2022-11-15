@@ -1,60 +1,105 @@
 #include "ast/magic.h"
 #include "ast/nodes.h"
 #include "ast/visitor.h"
+#include "dependencies/fmt.h"
+#include "lexer/unlex.h"
 #include "logging/logging.h"
+#include "parser/parsing_error.h"
 #include "utilities/strings.h"
 
 namespace lython {
 
 struct PrintTrait {
+    using Trace   = std::false_type;
     using StmtRet = bool;
     using ExprRet = bool;
     using ModRet  = bool;
     using PatRet  = bool;
+
+    enum {
+        MaxRecursionDepth = LY_MAX_VISITOR_RECURSION_DEPTH
+    };
 };
 
-int  get_precedence(Node const *node);
-void print_op(std::ostream &out, UnaryOperator op);
-void print_op(std::ostream &out, CmpOperator op);
-void print_op(std::ostream &out, BinaryOperator op, bool aug);
-void print_op(std::ostream &out, BoolOperator op);
+int  get_precedence(Node const* node);
+void print_op(std::ostream& out, UnaryOperator op);
+void print_op(std::ostream& out, CmpOperator op);
+void print_op(std::ostream& out, BinaryOperator op, bool aug);
+void print_op(std::ostream& out, BoolOperator op);
 
 #define ReturnType bool
 
-struct Printer: BaseVisitor<Printer, true, PrintTrait, std::ostream &, int> {
-    using Super = BaseVisitor<Printer, true, PrintTrait, std::ostream &, int>;
+struct PrinterConfig {
+    //
+    int max_line;
+};
 
-    String l0;
-    String latest = String(128, ' ');
+struct PrinterContext {
+    //
+};
+
+// Change this to return strings so we can change the format of partial results
+
+struct Printer: BaseVisitor<Printer, true, PrintTrait, std::ostream&, int> {
+    using Super = BaseVisitor<Printer, true, PrintTrait, std::ostream&, int>;
+
+    PrinterContext context;
+    String         l0;
+    String         latest = String(128, ' ');
 
     String const indent(int level, int scale = 4) {
         if (level <= 0)
             return l0;
 
         // one time allocation of an empty string
-        latest.resize(scale * level, ' ');
+        latest.resize(std::size_t(scale * level), ' ');
         return latest;
     }
 
-    ReturnType print_body(Array<StmtNode *> const &body, int depth, std::ostream &out, int level,
-                          bool print_last = false) {
+    void maybe_inline_comment(
+        Comment* com, int depth, std::ostream& out, int level, CodeLocation const& loc) {
+        if (com != nullptr) {
+            // lython::log(lython::LogLevel::Info, loc, "printing inline comment {}", com->comment);
+            out << "   ";
+            exec(com, depth, out, level);
+        }
+    }
+
+    StringStream fmt(ExprNode const* node, int depth, int level) {
+        StringStream ss;
+        exec(node, depth, ss, level);
+        return ss;
+    }
+
+    ReturnType print_body(Array<StmtNode*> const& body,
+                          int                     depth,
+                          std::ostream&           out,
+                          int                     level,
+                          bool                    print_last = false) {
 
         int k = 0;
-        for (auto &stmt: body) {
+        for (auto const& stmt: body) {
             k += 1;
 
             out << indent(level);
-            exec(stmt, depth, out, level);
+            bool printed_new_line = exec(stmt, depth, out, level);
 
-            if (k + 1 < body.size() || print_last) {
-                out << "\n";
+            if (stmt->is_one_line()) {
+                maybe_inline_comment(stmt->comment, depth, out, level, LOC);
+            }
+
+            // out << "\n";
+            if (!printed_new_line) {
+                if (k < body.size() || print_last) {
+                    out << "\n";
+                }
             }
         }
 
         return true;
     }
 
-    ReturnType excepthandler(ExceptHandler const &self, int depth, std::ostream &out, int level) {
+    ReturnType excepthandler(ExceptHandler const& self, int depth, std::ostream& out, int level) {
         out << '\n' << indent(level) << "except ";
 
         if (self.type.has_value()) {
@@ -66,11 +111,13 @@ struct Printer: BaseVisitor<Printer, true, PrintTrait, std::ostream &, int> {
             out << self.name.value();
         }
 
-        out << ":\n";
+        out << ":";
+        maybe_inline_comment(self.comment, depth, out, level, LOC);
+        out << "\n";
         return print_body(self.body, depth, out, level + 1);
     }
 
-    ReturnType matchcase(MatchCase const &self, int depth, std::ostream &out, int level) {
+    ReturnType matchcase(MatchCase const& self, int depth, std::ostream& out, int level) {
         out << indent(level) << "case ";
         exec(self.pattern, depth, out, level);
 
@@ -79,16 +126,18 @@ struct Printer: BaseVisitor<Printer, true, PrintTrait, std::ostream &, int> {
             exec(self.guard.value(), depth, out, level);
         }
 
-        out << ":\n";
+        out << ":";
+        maybe_inline_comment(self.comment, depth, out, level, LOC);
+        out << "\n";
         return print_body(self.body, depth, out, level + 1);
     }
 
-    void arguments(Arguments const &self, int depth, std::ostream &out, int level);
-    void withitem(WithItem const &self, int depth, std::ostream &out, int level);
-    void alias(Alias const &self, int depth, std::ostream &out, int level);
-    void keyword(Keyword const &self, int depth, std::ostream &out, int level);
+    void arguments(Arguments const& self, int depth, std::ostream& out, int level);
+    void withitem(WithItem const& self, int depth, std::ostream& out, int level);
+    void alias(Alias const& self, int depth, std::ostream& out, int level);
+    void keyword(Keyword const& self, int depth, std::ostream& out, int level);
 
-    void arg(Arg const &self, int depth, std::ostream &out, int level) {
+    void arg(Arg const& self, int depth, std::ostream& out, int level) {
         out << self.arg;
 
         if (self.annotation.has_value()) {
@@ -97,7 +146,7 @@ struct Printer: BaseVisitor<Printer, true, PrintTrait, std::ostream &, int> {
         }
     }
 #define FUNCTION_GEN(name, fun, rtype) \
-    rtype fun(const name *node, int depth, std::ostream &out, int level);
+    rtype fun(const name* node, int depth, std::ostream& out, int level);
 
 #define X(name, _)
 #define SECTION(name)
@@ -118,21 +167,21 @@ struct Printer: BaseVisitor<Printer, true, PrintTrait, std::ostream &, int> {
 #undef FUNCTION_GEN
 };
 
-void comprehension(Printer &p, Comprehension const &self, int depth, std::ostream &out, int level);
+void comprehension(Printer& p, Comprehension const& self, int depth, std::ostream& out, int level);
 
-void print(Comprehension const &self, std::ostream &out) {
+void print(Comprehension const& self, std::ostream& out) {
     Printer p;
     comprehension(p, self, 0, out, 0);
 }
 
-ReturnType Printer::attribute(Attribute const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::attribute(Attribute const* self, int depth, std::ostream& out, int level) {
     exec(self->value, depth, out, level);
     out << ".";
     out << self->attr;
     return false;
 }
 
-ReturnType Printer::subscript(Subscript const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::subscript(Subscript const* self, int depth, std::ostream& out, int level) {
     exec(self->value, depth, out, level);
     out << "[";
     exec(self->slice, depth, out, level);
@@ -140,17 +189,17 @@ ReturnType Printer::subscript(Subscript const *self, int depth, std::ostream &ou
     return false;
 }
 
-ReturnType Printer::starred(Starred const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::starred(Starred const* self, int depth, std::ostream& out, int level) {
     out << "*";
     exec(self->value, depth, out, level);
     return false;
 }
 
-ReturnType Printer::module(Module const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::module(Module const* self, int depth, std::ostream& out, int level) {
     return print_body(self->body, depth, out, level);
 }
 
-ReturnType Printer::raise(Raise const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::raise(Raise const* self, int depth, std::ostream& out, int level) {
     out << "raise ";
     if (self->exc.has_value()) {
         exec(self->exc.value(), depth, out, level);
@@ -163,7 +212,7 @@ ReturnType Printer::raise(Raise const *self, int depth, std::ostream &out, int l
     return false;
 }
 
-ReturnType Printer::assertstmt(Assert const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::assertstmt(Assert const* self, int depth, std::ostream& out, int level) {
     out << "assert ";
     exec(self->test, depth, out, level);
 
@@ -174,11 +223,11 @@ ReturnType Printer::assertstmt(Assert const *self, int depth, std::ostream &out,
     return false;
 }
 
-ReturnType Printer::with(With const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::with(With const* self, int depth, std::ostream& out, int level) {
     out << "with ";
 
     int i = 0;
-    for (auto &item: self->items) {
+    for (auto const& item: self->items) {
         exec(item.context_expr, depth, out, level);
 
         if (item.optional_vars.has_value()) {
@@ -191,17 +240,19 @@ ReturnType Printer::with(With const *self, int depth, std::ostream &out, int lev
         }
         i += 1;
     }
-    out << ":\n";
+    out << ":";
+    maybe_inline_comment(self->comment, depth, out, level, LOC);
+    out << "\n";
 
     print_body(self->body, depth, out, level + 1);
     return false;
 }
 
-ReturnType Printer::import(Import const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::import(Import const* self, int depth, std::ostream& out, int level) {
     out << "import ";
 
     int i = 0;
-    for (auto &alias: self->names) {
+    for (auto const& alias: self->names) {
         out << alias.name;
 
         if (alias.asname.has_value()) {
@@ -217,7 +268,7 @@ ReturnType Printer::import(Import const *self, int depth, std::ostream &out, int
     return false;
 }
 
-ReturnType Printer::importfrom(ImportFrom const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::importfrom(ImportFrom const* self, int depth, std::ostream& out, int level) {
     out << "from ";
     if (self->module.has_value()) {
         out << self->module.value();
@@ -225,7 +276,7 @@ ReturnType Printer::importfrom(ImportFrom const *self, int depth, std::ostream &
     out << " import ";
 
     int i = 0;
-    for (auto &alias: self->names) {
+    for (auto const& alias: self->names) {
         out << alias.name;
 
         if (alias.asname.has_value()) {
@@ -241,7 +292,7 @@ ReturnType Printer::importfrom(ImportFrom const *self, int depth, std::ostream &
     return false;
 }
 
-ReturnType Printer::slice(Slice const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::slice(Slice const* self, int depth, std::ostream& out, int level) {
     if (self->lower.has_value()) {
         exec(self->lower.value(), depth, out, level);
     }
@@ -259,69 +310,65 @@ ReturnType Printer::slice(Slice const *self, int depth, std::ostream &out, int l
     return false;
 }
 
-ReturnType Printer::tupleexpr(TupleExpr const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::tupleexpr(TupleExpr const* self, int depth, std::ostream& out, int level) {
     if (level == -1) {
-        out << join<ExprNode *>(", ", self->elts);
+        out << join<ExprNode*>(", ", self->elts);
     } else {
-        out << "(" << join<ExprNode *>(", ", self->elts) << ")";
+        out << "(" << join<ExprNode*>(", ", self->elts) << ")";
     }
     return false;
 }
 
-ReturnType Printer::listexpr(ListExpr const *self, int depth, std::ostream &out, int level) {
-    out << "[" << join<ExprNode *>(", ", self->elts) << "]";
+ReturnType Printer::listexpr(ListExpr const* self, int depth, std::ostream& out, int level) {
+    out << "[" << join<ExprNode*>(", ", self->elts) << "]";
     return false;
 }
 
-ReturnType Printer::setexpr(SetExpr const *self, int depth, std::ostream &out, int level) {
-    out << "{" << join<ExprNode *>(", ", self->elts) << "}";
+ReturnType Printer::setexpr(SetExpr const* self, int depth, std::ostream& out, int level) {
+    out << "{" << join<ExprNode*>(", ", self->elts) << "}";
     return false;
 }
 
-ReturnType Printer::dictexpr(DictExpr const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::dictexpr(DictExpr const* self, int depth, std::ostream& out, int level) {
     Array<String> strs;
     strs.reserve(self->keys.size());
 
     for (int i = 0; i < self->keys.size(); i++) {
-        // FIXME std::string -> String conversion
-        strs.push_back(
-            String(fmt::format("{}: {}", str(self->keys[i]), str(self->values[i])).c_str()));
+        strs.push_back(fmtstr("{}: {}", str(self->keys[i]), str(self->values[i])));
     }
 
     out << "{" << join(", ", strs) << "}";
     return false;
 }
 
-ReturnType Printer::matchvalue(MatchValue const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::matchvalue(MatchValue const* self, int depth, std::ostream& out, int level) {
     exec(self->value, depth, out, level);
     return false;
 }
 
-ReturnType Printer::matchsingleton(MatchSingleton const *self, int depth, std::ostream &out,
-                                   int level) {
+ReturnType
+Printer::matchsingleton(MatchSingleton const* self, int depth, std::ostream& out, int level) {
     self->value.print(out);
     return false;
 }
 
-ReturnType Printer::matchsequence(MatchSequence const *self, int depth, std::ostream &out,
-                                  int level) {
+ReturnType
+Printer::matchsequence(MatchSequence const* self, int depth, std::ostream& out, int level) {
     auto result = join(", ", self->patterns);
     out << "[" << result << "]";
     return false;
 }
 
-ReturnType Printer::matchmapping(MatchMapping const *self, int depth, std::ostream &out,
-                                 int level) {
+ReturnType
+Printer::matchmapping(MatchMapping const* self, int depth, std::ostream& out, int level) {
     Array<String> strs;
     strs.reserve(self->keys.size());
 
     for (int i = 0; i < self->keys.size(); i++) {
-        // FIXME std::string -> String conversion
-        strs.push_back(
-            String(fmt::format("{}: {}", str(self->keys[i]), str(self->patterns[i])).c_str()));
+        strs.push_back(fmtstr("{}: {}", str(self->keys[i]), str(self->patterns[i])));
     }
 
-    String remains = "";
+    String remains;
     if (self->rest.has_value()) {
         StringStream ss;
         ss << ", **" << self->rest.value();
@@ -332,11 +379,11 @@ ReturnType Printer::matchmapping(MatchMapping const *self, int depth, std::ostre
     return false;
 }
 
-ReturnType Printer::matchclass(MatchClass const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::matchclass(MatchClass const* self, int depth, std::ostream& out, int level) {
     exec(self->cls, depth, out, level);
     out << "(" << join(", ", self->patterns);
 
-    if (self->patterns.size() > 0 && self->kwd_attrs.size() > 0) {
+    if (!self->patterns.empty() && !self->kwd_attrs.empty()) {
         out << ", ";
     }
 
@@ -344,9 +391,7 @@ ReturnType Printer::matchclass(MatchClass const *self, int depth, std::ostream &
     kwdpat.reserve(self->kwd_attrs.size());
 
     for (int i = 0; i < self->kwd_attrs.size(); i++) {
-        // FIXME std::string -> String conversion
-        kwdpat.push_back(
-            String(fmt::format("{}={}", self->kwd_attrs[i], str(self->kwd_patterns[i])).c_str()));
+        kwdpat.push_back(fmtstr("{}={}", self->kwd_attrs[i], str(self->kwd_patterns[i])));
     }
 
     out << join(", ", kwdpat);
@@ -354,7 +399,7 @@ ReturnType Printer::matchclass(MatchClass const *self, int depth, std::ostream &
     return false;
 }
 
-ReturnType Printer::matchstar(MatchStar const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::matchstar(MatchStar const* self, int depth, std::ostream& out, int level) {
     out << "*";
 
     if (self->name.has_value()) {
@@ -363,7 +408,7 @@ ReturnType Printer::matchstar(MatchStar const *self, int depth, std::ostream &ou
     return false;
 }
 
-ReturnType Printer::matchas(MatchAs const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::matchas(MatchAs const* self, int depth, std::ostream& out, int level) {
     if (self->pattern.has_value()) {
         exec(self->pattern.value(), depth, out, level);
     }
@@ -374,52 +419,63 @@ ReturnType Printer::matchas(MatchAs const *self, int depth, std::ostream &out, i
     return false;
 }
 
-ReturnType Printer::matchor(MatchOr const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::matchor(MatchOr const* self, int depth, std::ostream& out, int level) {
     out << join(" | ", self->patterns);
     return false;
 }
 
-ReturnType Printer::ifstmt(If const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::ifstmt(If const* self, int depth, std::ostream& out, int level) {
     out << "if ";
     exec(self->test, depth, out, level);
-    out << ":\n";
+    out << ":";
+    maybe_inline_comment(self->comment, depth, out, level, LOC);
+    out << "\n";
     print_body(self->body, depth, out, level + 1);
 
     for (int i = 0; i < self->tests.size(); i++) {
-        auto &eliftest = self->tests[i];
-        auto &elifbody = self->bodies[i];
+        auto& eliftest = self->tests[i];
+        auto& elifbody = self->bodies[i];
 
         out << "\n" << indent(level) << "elif ";
 
         exec(eliftest, depth, out, level);
-        out << ":\n";
+        out << ":";
+        maybe_inline_comment(self->tests_comment[i], depth, out, level, LOC);
+        out << "\n";
         print_body(elifbody, depth, out, level + 1);
     }
 
-    if (self->orelse.size()) {
-        out << "\n" << indent(level) << "else:\n";
+    if (!self->orelse.empty()) {
+        out << "\n" << indent(level) << "else:";
+        maybe_inline_comment(self->else_comment, depth, out, level, LOC);
+        out << "\n";
+
         print_body(self->orelse, depth, out, level + 1);
     }
     return false;
 }
 
-ReturnType Printer::match(Match const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::match(Match const* self, int depth, std::ostream& out, int level) {
     out << "match ";
     exec(self->subject, depth, out, level);
-    out << ":\n";
+    out << ":";
+    maybe_inline_comment(self->comment, depth, out, level, LOC);
+    out << "\n";
 
     int i = 0;
-    for (auto &case_: self->cases) {
+    for (auto const& case_: self->cases) {
         matchcase(case_, depth, out, level + 1);
 
         if (i + 1 < self->cases.size()) {
             out << '\n';
         }
+
+        i += 1;
     }
     return false;
 }
 
-ReturnType Printer::lambda(Lambda const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::lambda(Lambda const* self, int depth, std::ostream& out, int level) {
     out << "lambda ";
     arguments(self->args, depth, out, 0);
     out << ": ";
@@ -427,17 +483,16 @@ ReturnType Printer::lambda(Lambda const *self, int depth, std::ostream &out, int
     return false;
 }
 
-ReturnType Printer::ifexp(IfExp const *self, int depth, std::ostream &out, int level) {
-    out << "if ";
-    exec(self->test, depth, out, level);
-    out << ": ";
+ReturnType Printer::ifexp(IfExp const* self, int depth, std::ostream& out, int level) {
     exec(self->body, depth, out, level);
+    out << " if ";
+    exec(self->test, depth, out, level);
     out << " else ";
     exec(self->orelse, depth, out, level);
     return false;
 }
 
-ReturnType Printer::listcomp(ListComp const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::listcomp(ListComp const* self, int depth, std::ostream& out, int level) {
     out << "[";
     exec(self->elt, depth, out, level);
 
@@ -447,7 +502,7 @@ ReturnType Printer::listcomp(ListComp const *self, int depth, std::ostream &out,
     return false;
 }
 
-ReturnType Printer::setcomp(SetComp const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::setcomp(SetComp const* self, int depth, std::ostream& out, int level) {
     out << "{";
     exec(self->elt, depth, out, level);
 
@@ -457,8 +512,8 @@ ReturnType Printer::setcomp(SetComp const *self, int depth, std::ostream &out, i
     return false;
 }
 
-ReturnType Printer::generateexpr(GeneratorExp const *self, int depth, std::ostream &out,
-                                 int level) {
+ReturnType
+Printer::generateexpr(GeneratorExp const* self, int depth, std::ostream& out, int level) {
     out << "(";
     exec(self->elt, depth, out, level);
 
@@ -468,7 +523,7 @@ ReturnType Printer::generateexpr(GeneratorExp const *self, int depth, std::ostre
     return false;
 }
 
-ReturnType Printer::dictcomp(DictComp const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::dictcomp(DictComp const* self, int depth, std::ostream& out, int level) {
     out << "{";
     exec(self->key, depth, out, level);
     out << ": ";
@@ -479,39 +534,44 @@ ReturnType Printer::dictcomp(DictComp const *self, int depth, std::ostream &out,
     return false;
 }
 
-ReturnType Printer::await(Await const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::await(Await const* self, int depth, std::ostream& out, int level) {
     out << "await ";
     exec(self->value, depth, out, level);
     return false;
 }
 
-ReturnType Printer::yield(Yield const *self, int depth, std::ostream &out, int level) {
-    out << "yield ";
+ReturnType Printer::yield(Yield const* self, int depth, std::ostream& out, int level) {
+    out << "yield";
     if (self->value.has_value()) {
+        out << " ";
         exec(self->value.value(), depth, out, level);
     }
     return false;
 }
 
-ReturnType Printer::yieldfrom(YieldFrom const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::yieldfrom(YieldFrom const* self, int depth, std::ostream& out, int level) {
     out << "yield from ";
     exec(self->value, depth, out, level);
     return false;
 }
 
-ReturnType Printer::call(Call const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::call(Call const* self, int depth, std::ostream& out, int level) {
+
+    // StringStream fname = fmt(self->func, depth, level);
+    // out << fname.str() << "(";
+
     exec(self->func, depth, out, level);
     out << "(";
 
     for (int i = 0; i < self->args.size(); i++) {
         exec(self->args[i], depth, out, level);
 
-        if (i < self->args.size() - 1 || self->keywords.size() > 0)
+        if (i < self->args.size() - 1 || !self->keywords.empty())
             out << ", ";
     }
 
     for (int i = 0; i < self->keywords.size(); i++) {
-        auto &key = self->keywords[i];
+        auto const& key = self->keywords[i];
 
         out << self->keywords[i].arg;
         out << "=";
@@ -526,19 +586,19 @@ ReturnType Printer::call(Call const *self, int depth, std::ostream &out, int lev
     return false;
 }
 
-ReturnType Printer::constant(Constant const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::constant(Constant const* self, int depth, std::ostream& out, int level) {
     self->value.print(out);
     return false;
 }
 
-ReturnType Printer::namedexpr(NamedExpr const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::namedexpr(NamedExpr const* self, int depth, std::ostream& out, int level) {
     exec(self->target, depth, out, level);
     out << " := ";
     exec(self->value, depth, out, level);
     return false;
 }
 
-ReturnType Printer::classdef(ClassDef const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::classdef(ClassDef const* self, int depth, std::ostream& out, int level) {
     int k = 0;
     for (auto decorator: self->decorator_list) {
         if (k > 0) {
@@ -546,32 +606,32 @@ ReturnType Printer::classdef(ClassDef const *self, int depth, std::ostream &out,
         }
 
         out << "@";
-        exec(decorator, depth, out, level);
+        exec(decorator.expr, depth, out, level);
+        maybe_inline_comment(decorator.comment, depth, out, level, LOC);
         out << "\n";
         k += 1;
     }
 
-    if (self->decorator_list.size() > 0) {
+    if (!self->decorator_list.empty()) {
         out << indent(level);
     }
 
     out << "class " << self->name;
-    if (self->bases.size() + self->keywords.size() > 0) {
+    if (self->bases.size() + size_t(!self->keywords.empty())) {
         out << '(';
     }
 
-    out << join<ExprNode *>(", ", self->bases);
+    out << join<ExprNode*>(", ", self->bases);
 
-    if (self->bases.size() > 0 && self->keywords.size() > 0) {
+    if (!self->bases.empty() && !self->keywords.empty()) {
         out << ", ";
     }
 
     Array<String> kwd;
     kwd.reserve(self->keywords.size());
 
-    for (auto kw: self->keywords) {
-        // FIXME std::string -> String conversion
-        kwd.push_back(String(fmt::format("{}={}", str(kw.arg), str(kw.value)).c_str()));
+    for (auto const& kw: self->keywords) {
+        kwd.push_back(fmtstr("{}={}", str(kw.arg), str(kw.value)));
     }
 
     out << join(", ", kwd);
@@ -580,33 +640,47 @@ ReturnType Printer::classdef(ClassDef const *self, int depth, std::ostream &out,
         out << ')';
     }
 
-    out << ":\n";
+    out << ":";
+    maybe_inline_comment(self->comment, depth, out, level, LOC);
+    out << "\n";
 
     if (self->docstring.has_value()) {
-        out << indent(level + 1) << "\"\"\"" << self->docstring.value() << "\"\"\"\n";
+        Docstring const& doc = self->docstring.value();
+        out << indent(level + 1) << "\"\"\"" << doc.docstring << "\"\"\"";
+
+        maybe_inline_comment(doc.comment, depth, out, level, LOC);
+        out << "\n";
     }
 
-    int assign = 1;
-    k          = 0;
-    for (auto &stmt: self->body) {
+    bool assign = false;
+    k           = 0;
+    for (auto const& stmt: self->body) {
 
         assign = stmt->kind == NodeKind::Assign || stmt->kind == NodeKind::AnnAssign ||
                  stmt->kind == NodeKind::Pass;
 
-        if (k > 0 && assign == 0) {
+        // print an extra line before if not an attribute
+        if (k > 0 && !assign) {
             out << "\n";
         }
 
         out << indent(level + 1);
-        exec(stmt, depth, out, level + 1);
+        bool printed_new_line = exec(stmt, depth, out, level + 1);
 
-        out << "\n";
+        if (stmt->is_one_line()) {
+            maybe_inline_comment(stmt->comment, depth, out, level, LOC);
+        }
+        if (!printed_new_line) {
+            if (k + 1 < self->body.size()) {
+                out << "\n";
+            }
+        }
         k += 1;
     }
     return false;
 }
 
-ReturnType Printer::functiondef(FunctionDef const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::functiondef(FunctionDef const* self, int depth, std::ostream& out, int level) {
     int k = 0;
     for (auto decorator: self->decorator_list) {
         if (k > 0) {
@@ -614,12 +688,13 @@ ReturnType Printer::functiondef(FunctionDef const *self, int depth, std::ostream
         }
 
         out << "@";
-        exec(decorator, depth, out, level);
+        exec(decorator.expr, depth, out, level);
+        maybe_inline_comment(decorator.comment, depth, out, level, LOC);
         out << "\n";
         k += 1;
     }
 
-    if (self->decorator_list.size() > 0) {
+    if (!self->decorator_list.empty()) {
         out << indent(level);
     }
 
@@ -632,10 +707,16 @@ ReturnType Printer::functiondef(FunctionDef const *self, int depth, std::ostream
         exec(self->returns.value(), depth, out, level);
     }
 
-    out << ":\n";
+    out << ":";
+    maybe_inline_comment(self->comment, depth, out, level, LOC);
+    out << "\n";
 
     if (self->docstring.has_value()) {
-        out << indent(level + 1) << "\"\"\"" << self->docstring.value() << "\"\"\"\n";
+        Docstring const& doc = self->docstring.value();
+        out << indent(level + 1) << "\"\"\"" << doc.docstring << "\"\"\"";
+
+        maybe_inline_comment(doc.comment, depth, out, level, LOC);
+        out << "\n";
     }
 
     print_body(self->body, depth, out, level + 1, true);
@@ -644,11 +725,11 @@ ReturnType Printer::functiondef(FunctionDef const *self, int depth, std::ostream
     return false;
 }
 
-ReturnType Printer::inlinestmt(Inline const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::inlinestmt(Inline const* self, int depth, std::ostream& out, int level) {
     out << indent(level);
 
     int k = 0;
-    for (auto &stmt: self->body) {
+    for (auto const& stmt: self->body) {
         exec(stmt, depth, out, level);
 
         if (k + 1 < self->body.size()) {
@@ -661,56 +742,74 @@ ReturnType Printer::inlinestmt(Inline const *self, int depth, std::ostream &out,
     return false;
 }
 
-ReturnType Printer::forstmt(For const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::forstmt(For const* self, int depth, std::ostream& out, int level) {
     out << "for ";
     exec(self->target, depth, out, -1);
     out << " in ";
     exec(self->iter, depth, out, -1);
-    out << ":\n";
+    out << ":";
+
+    maybe_inline_comment(self->comment, depth, out, level, LOC);
+    out << "\n";
+
     print_body(self->body, depth, out, level + 1);
 
-    if (self->orelse.size() > 0) {
+    if (!self->orelse.empty()) {
         out << '\n';
-        out << indent(level) << "else:\n";
+        out << indent(level) << "else:";
+        maybe_inline_comment(self->else_comment, depth, out, level, LOC);
+        out << "\n";
         print_body(self->orelse, depth, out, level + 1);
     }
 
     return false;
 }
 
-ReturnType Printer::trystmt(Try const *self, int depth, std::ostream &out, int level) {
-    out << "try:\n";
+ReturnType Printer::trystmt(Try const* self, int depth, std::ostream& out, int level) {
+    out << "try:";
+    maybe_inline_comment(self->comment, depth, out, level, LOC);
+    out << "\n";
+
     print_body(self->body, depth, out, level + 1);
 
-    for (auto &handler: self->handlers) {
+    for (auto const& handler: self->handlers) {
         excepthandler(handler, depth, out, level);
     }
 
-    if (self->orelse.size() > 0) {
-        out << "\n" << indent(level) << "else:\n";
+    if (!self->orelse.empty()) {
+        out << "\n" << indent(level) << "else:";
+        maybe_inline_comment(self->else_comment, depth, out, level, LOC);
+        out << "\n";
         print_body(self->orelse, depth, out, level + 1);
     }
 
-    if (self->finalbody.size() > 0) {
-        out << "\n" << indent(level) << "finally:\n";
+    if (!self->finalbody.empty()) {
+        out << "\n" << indent(level) << "finally:";
+        maybe_inline_comment(self->finally_comment, depth, out, level, LOC);
+        out << "\n";
         print_body(self->finalbody, depth, out, level + 1);
     }
 
     return false;
 }
 
-ReturnType Printer::compare(Compare const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::compare(Compare const* self, int depth, std::ostream& out, int level) {
     exec(self->left, depth, out, level);
+    int n = int(self->comparators.size());
 
     for (int i = 0; i < self->ops.size(); i++) {
         print_op(out, self->ops[i]);
-        exec(self->comparators[i], depth, out, level);
+
+        // this can happen when the user does not finish writing the expression
+        if (i < n) {
+            exec(self->comparators[i], depth, out, level);
+        }
     }
 
     return false;
 }
 
-ReturnType Printer::binop(BinOp const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::binop(BinOp const* self, int depth, std::ostream& out, int level) {
     auto sself   = get_precedence(self);
     auto lhspred = get_precedence(self->left) < sself;
     auto rhspred = get_precedence(self->right) < sself;
@@ -736,14 +835,36 @@ ReturnType Printer::binop(BinOp const *self, int depth, std::ostream &out, int l
     return false;
 }
 
-ReturnType Printer::boolop(BoolOp const *self, int depth, std::ostream &out, int level) {
-    exec(self->values[0], depth, out, level);
-    print_op(out, self->op);
-    exec(self->values[1], depth, out, level);
+ReturnType
+Printer::invalidstmt(InvalidStatement const* self, int depth, std::ostream& out, int level) {
+    //
+    if (!self->tokens.empty()) {
+        Unlex unlex;
+        unlex.format(out, self->tokens);
+    }
     return false;
 }
 
-ReturnType Printer::unaryop(UnaryOp const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::boolop(BoolOp const* self, int depth, std::ostream& out, int level) {
+
+    int m = self->opcount + 1;
+
+    int n = int(self->values.size());
+    for (int i = 0; i < m; i++) {
+
+        if (i < n) {
+            exec(self->values[i], depth, out, level);
+        }
+
+        if (i < m - 1) {
+            print_op(out, self->op);
+        }
+    }
+
+    return false;
+}
+
+ReturnType Printer::unaryop(UnaryOp const* self, int depth, std::ostream& out, int level) {
     print_op(out, self->op);
     out << " ";
     exec(self->operand, depth, out, level);
@@ -751,21 +872,25 @@ ReturnType Printer::unaryop(UnaryOp const *self, int depth, std::ostream &out, i
     return false;
 }
 
-ReturnType Printer::whilestmt(While const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::whilestmt(While const* self, int depth, std::ostream& out, int level) {
     out << "while ";
     exec(self->test, depth, out, level);
-    out << ":\n";
+    out << ":";
+    maybe_inline_comment(self->comment, depth, out, level, LOC);
+    out << "\n";
     print_body(self->body, depth, out, level + 1);
 
-    if (self->orelse.size() > 0) {
-        out << '\n' << indent(level) << "else:\n";
+    if (!self->orelse.empty()) {
+        out << '\n' << indent(level) << "else:";
+        maybe_inline_comment(self->else_comment, depth, out, level, LOC);
+        out << "\n";
         print_body(self->orelse, depth, out, level + 1);
     }
 
     return false;
 }
 
-ReturnType Printer::returnstmt(Return const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::returnstmt(Return const* self, int depth, std::ostream& out, int level) {
     out << "return ";
 
     if (self->value.has_value()) {
@@ -775,7 +900,7 @@ ReturnType Printer::returnstmt(Return const *self, int depth, std::ostream &out,
     return false;
 }
 
-ReturnType Printer::deletestmt(Delete const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::deletestmt(Delete const* self, int depth, std::ostream& out, int level) {
     out << "del ";
 
     for (int i = 0; i < self->targets.size(); i++) {
@@ -788,7 +913,7 @@ ReturnType Printer::deletestmt(Delete const *self, int depth, std::ostream &out,
     return false;
 }
 
-ReturnType Printer::augassign(AugAssign const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::augassign(AugAssign const* self, int depth, std::ostream& out, int level) {
     exec(self->target, depth, out, -1);
     print_op(out, self->op, true);
     out << "= ";
@@ -796,14 +921,14 @@ ReturnType Printer::augassign(AugAssign const *self, int depth, std::ostream &ou
     return false;
 }
 
-ReturnType Printer::assign(Assign const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::assign(Assign const* self, int depth, std::ostream& out, int level) {
     exec(self->targets[0], depth, out, -1);
     out << " = ";
     exec(self->value, depth, out, -1);
     return false;
 }
 
-ReturnType Printer::annassign(AnnAssign const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::annassign(AnnAssign const* self, int depth, std::ostream& out, int level) {
     exec(self->target, depth, out, level);
     out << ": ";
 
@@ -816,45 +941,45 @@ ReturnType Printer::annassign(AnnAssign const *self, int depth, std::ostream &ou
     return false;
 }
 
-ReturnType Printer::pass(Pass const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::pass(Pass const* self, int depth, std::ostream& out, int level) {
     out << "pass";
     return false;
 }
 
-ReturnType Printer::breakstmt(Break const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::breakstmt(Break const* self, int depth, std::ostream& out, int level) {
     out << "break";
     return false;
 }
 
-ReturnType Printer::continuestmt(Continue const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::continuestmt(Continue const* self, int depth, std::ostream& out, int level) {
     out << "continue";
     return false;
 }
 
-ReturnType Printer::exprstmt(Expr const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::exprstmt(Expr const* self, int depth, std::ostream& out, int level) {
     if (self->value != nullptr)
         exec(self->value, depth, out, -1);
 
     return false;
 }
 
-ReturnType Printer::global(Global const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::global(Global const* self, int depth, std::ostream& out, int level) {
     out << "global " << join(", ", self->names);
     return false;
 }
 
-ReturnType Printer::nonlocal(Nonlocal const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::nonlocal(Nonlocal const* self, int depth, std::ostream& out, int level) {
     out << "nonlocal " << join(", ", self->names);
     return false;
 }
 
-ReturnType Printer::arrow(Arrow const *self, int depth, std::ostream &out, int level) {
-    out << '(' << join<ExprNode *>(", ", self->args) << ") -> ";
+ReturnType Printer::arrow(Arrow const* self, int depth, std::ostream& out, int level) {
+    out << '(' << join<ExprNode*>(", ", self->args) << ") -> ";
     out << str(self->returns);
     return false;
 }
 
-ReturnType Printer::dicttype(DictType const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::dicttype(DictType const* self, int depth, std::ostream& out, int level) {
     out << "Dict[";
     out << str(self->key);
     out << ", ";
@@ -862,46 +987,46 @@ ReturnType Printer::dicttype(DictType const *self, int depth, std::ostream &out,
     return false;
 }
 
-ReturnType Printer::settype(SetType const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::settype(SetType const* self, int depth, std::ostream& out, int level) {
     out << "Set[";
     out << str(self->value) << "]";
     return false;
 }
 
-ReturnType Printer::name(Name const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::name(Name const* self, int depth, std::ostream& out, int level) {
     out << self->id;
     return false;
 }
 
-ReturnType Printer::arraytype(ArrayType const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::arraytype(ArrayType const* self, int depth, std::ostream& out, int level) {
     out << "Array[";
     out << str(self->value) << "]";
     return false;
 }
 
-ReturnType Printer::tupletype(TupleType const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::tupletype(TupleType const* self, int depth, std::ostream& out, int level) {
     out << "Tuple[";
-    out << join<ExprNode *>(", ", self->types) << "]";
+    out << join<ExprNode*>(", ", self->types) << "]";
     return false;
 }
 
-ReturnType Printer::builtintype(BuiltinType const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::builtintype(BuiltinType const* self, int depth, std::ostream& out, int level) {
     out << self->name;
     return false;
 }
 
-ReturnType Printer::joinedstr(JoinedStr const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::joinedstr(JoinedStr const* self, int depth, std::ostream& out, int level) {
     out << "JoinedStr";
     return false;
 }
 
-ReturnType Printer::formattedvalue(FormattedValue const *self, int depth, std::ostream &out,
-                                   int indent) {
+ReturnType
+Printer::formattedvalue(FormattedValue const* self, int depth, std::ostream& out, int indent) {
     out << "FormattedValue";
     return false;
 }
 
-ReturnType Printer::classtype(ClassType const *self, int depth, std::ostream &out, int level) {
+ReturnType Printer::classtype(ClassType const* self, int depth, std::ostream& out, int level) {
     out << self->def->name;
     return false;
 }
@@ -909,23 +1034,25 @@ ReturnType Printer::classtype(ClassType const *self, int depth, std::ostream &ou
 // Helper
 // ==================================================
 
-void ConstantValue::print(std::ostream &out) const {
+void ConstantValue::print(std::ostream& out) const {
     switch (kind) {
-    case TInvalid:
-        out << "<Constant:Invalid>";
-        break;
+    case TInvalid: out << "<Constant:Invalid>"; break;
 
-    case TInt:
-        out << value.integer;
-        break;
+    case Ti8: out << value.i8; break;
+    case Ti16: out << value.i16; break;
+    case Ti32: out << value.i32; break;
+    case Ti64: out << value.i64; break;
 
-    case TFloat:
-        out << value.singlef;
-        break;
+    case Tu8: out << value.u8; break;
+    case Tu16: out << value.u16; break;
+    case Tu32: out << value.u32; break;
+    case Tu64: out << value.u64; break;
 
-    case TDouble:
+    case Tf32: out << value.f32; break;
+
+    case Tf64:
         // always print a float even without decimal point
-        out << fmt::format("{:#}", value.doublef);
+        out << fmtstr("{:#}", value.f64);
         break;
 
     case TBool:
@@ -936,23 +1063,24 @@ void ConstantValue::print(std::ostream &out) const {
         }
         break;
 
-    case TNone:
-        out << "None";
-        break;
+    case TNone: out << "None"; break;
 
-    case TString:
-        out << "\"" << value.string << "\"";
-        break;
+    case TString: out << "\"" << value.string << "\""; break;
+
+    case TObject: out << "<object>"; break;
+
+    default: break;
     }
 }
 
 String Node::__str__() const {
     StringStream ss;
-    if (kind == NodeKind::Invalid) {
+    if (kind <= NodeKind::Invalid) {
         error("Node is invalid");
+        return "<Invalid>";
     }
     Printer p;
-    p.Super::exec<bool>(this, ss, 0);
+    p.Super::exec<bool>(this, 0, ss, 0);
     return ss.str();
 }
 
@@ -962,7 +1090,7 @@ String Node::__str__() const {
 //     out << ">";
 // }
 
-void print_op(std::ostream &out, BoolOperator op) {
+void print_op(std::ostream& out, BoolOperator op) {
     // clang-format off
     switch (op) {
     case BoolOperator::And:   out << " and "; return;
@@ -972,7 +1100,7 @@ void print_op(std::ostream &out, BoolOperator op) {
     // clang-format on
 }
 
-void print_op(std::ostream &out, BinaryOperator op, bool aug) {
+void print_op(std::ostream& out, BinaryOperator op, bool aug) {
     // clang-format off
     switch (op) {
     case BinaryOperator::Add:       out << " +"; break;
@@ -999,7 +1127,7 @@ void print_op(std::ostream &out, BinaryOperator op, bool aug) {
     }
 }
 
-void print_op(std::ostream &out, CmpOperator op) {
+void print_op(std::ostream& out, CmpOperator op) {
     // clang-format off
     switch (op) {
     case CmpOperator::None:     out << " <Cmp:None> "; return;
@@ -1017,7 +1145,7 @@ void print_op(std::ostream &out, CmpOperator op) {
     // clang-format on
 }
 
-void print_op(std::ostream &out, UnaryOperator op) {
+void print_op(std::ostream& out, UnaryOperator op) {
     // clang-format off
     switch (op) {
     case UnaryOperator::None:   out << "<Unary:None>"; return;
@@ -1029,19 +1157,19 @@ void print_op(std::ostream &out, UnaryOperator op) {
     // clang-format on
 }
 
-void comprehension(Printer &p, Comprehension const &self, int depth, std::ostream &out, int level) {
+void comprehension(Printer& p, Comprehension const& self, int depth, std::ostream& out, int level) {
     out << " for ";
     p.exec(self.target, depth, out, level);
     out << " in ";
     p.exec(self.iter, depth, out, level);
 
-    for (auto expr: self.ifs) {
+    for (auto* expr: self.ifs) {
         out << " if ";
         p.exec(expr, depth, out, level);
     }
 }
 
-void Printer::keyword(Keyword const &self, int depth, std::ostream &out, int level) {
+void Printer::keyword(Keyword const& self, int depth, std::ostream& out, int level) {
     out << self.arg;
     if (self.value != nullptr) {
         out << " = ";
@@ -1049,27 +1177,27 @@ void Printer::keyword(Keyword const &self, int depth, std::ostream &out, int lev
     }
 }
 
-void Printer::alias(Alias const &self, int depth, std::ostream &out, int level) {
+void Printer::alias(Alias const& self, int depth, std::ostream& out, int level) {
     out << self.name;
     if (self.asname.has_value()) {
         out << " as " << self.asname.value();
     }
 }
 
-ReturnType Printer::functiontype(FunctionType const *self, int depth, std::ostream &out,
-                                 int indent) {
-    return true;
+ReturnType
+Printer::functiontype(FunctionType const* self, int depth, std::ostream& out, int indent) {
+    return false;
 }
 
-ReturnType Printer::expression(Expression const *self, int depth, std::ostream &out, int level) {
-    return true;
+ReturnType Printer::expression(Expression const* self, int depth, std::ostream& out, int level) {
+    return false;
 }
 
-ReturnType Printer::interactive(Interactive const *self, int depth, std::ostream &out, int level) {
-    return true;
+ReturnType Printer::interactive(Interactive const* self, int depth, std::ostream& out, int level) {
+    return false;
 }
 
-void Printer::withitem(WithItem const &self, int depth, std::ostream &out, int level) {
+void Printer::withitem(WithItem const& self, int depth, std::ostream& out, int level) {
     exec(self.context_expr, depth, out, level);
     if (self.optional_vars.has_value()) {
         out << " as ";
@@ -1077,10 +1205,15 @@ void Printer::withitem(WithItem const &self, int depth, std::ostream &out, int l
     }
 }
 
-void Printer::arguments(Arguments const &self, int depth, std::ostream &out, int level) {
+ReturnType Printer::comment(Comment const* n, int depth, std::ostream& out, int level) {
+    out << "#" << n->comment;
+    return false;
+}
+
+void Printer::arguments(Arguments const& self, int depth, std::ostream& out, int level) {
     int i = 0;
 
-    for (auto &arg: self.args) {
+    for (auto& arg: self.args) {
         out << arg.arg;
 
         if (arg.annotation.has_value()) {
@@ -1117,7 +1250,7 @@ void Printer::arguments(Arguments const &self, int depth, std::ostream &out, int
     }
 
     i = 0;
-    for (auto &kw: self.kwonlyargs) {
+    for (auto const& kw: self.kwonlyargs) {
         out << kw.arg;
 
         if (kw.annotation.has_value()) {
@@ -1142,16 +1275,19 @@ void Printer::arguments(Arguments const &self, int depth, std::ostream &out, int
     }
 
     if (self.kwarg.has_value()) {
-        if (self.kwonlyargs.size() > 0) {
+        if (!self.kwonlyargs.empty()) {
             out << ", ";
         }
         out << "**" << self.kwarg.value().arg;
     }
 }
 
-int get_precedence(Node const *node) {
+int get_precedence(Node const* node) {
+    if (node == nullptr) {
+        return 1000;
+    }
     if (node->kind == NodeKind::BinOp) {
-        BinOp *op = (BinOp *)(node);
+        BinOp* op = (BinOp*)(node);
         // clang-format off
         switch (op->op) {
             case BinaryOperator::Add: return 1;
@@ -1167,31 +1303,31 @@ int get_precedence(Node const *node) {
     return 1000;
 }
 
-void print(Node const *obj, std::ostream &out) {
+void print(Node const* obj, std::ostream& out) {
     Printer p;
-    p.exec<bool>(obj, out, 0);
+    p.exec<bool>(obj, 0, out, 0);
 }
-void print(ExprNode const *obj, std::ostream &out) {
-    Printer p;
-    p.exec(obj, 0, out, 0);
-}
-void print(Pattern const *obj, std::ostream &out) {
+void print(ExprNode const* obj, std::ostream& out) {
     Printer p;
     p.exec(obj, 0, out, 0);
 }
-void print(StmtNode const *obj, std::ostream &out) {
+void print(Pattern const* obj, std::ostream& out) {
     Printer p;
     p.exec(obj, 0, out, 0);
 }
-void print(ModNode const *obj, std::ostream &out) {
+void print(StmtNode const* obj, std::ostream& out) {
+    Printer p;
+    p.exec(obj, 0, out, 0);
+}
+void print(ModNode const* obj, std::ostream& out) {
     Printer p;
     p.exec(obj, 0, out, 0);
 }
 
-String str(ExprNode const *obj) {
+String str(ExprNode const* obj) {
     StringStream ss;
     print(obj, ss);
     return ss.str();
 }
 
-} // namespace lython
+}  // namespace lython
