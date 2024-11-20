@@ -6,6 +6,14 @@
 #include <unordered_map>
 #include <vector>
 
+#ifdef __clang__
+#define KWMETA(...) __attribute__((annotate(#__VA_ARGS__))) 
+#else
+#define KWMETA(...)
+#endif
+
+
+#include "utilities/metadata_1.h"
 #include "logging/logging.h"
 
 namespace lython {
@@ -14,113 +22,15 @@ void show_alloc_stats();
 
 namespace meta {
 
-// NOTE: All those should not depend on each other during deinit time
-// https://isocpp.org/wiki/faq/ctors#construct-on-first-use-v2
-struct Stat {
-    int allocated     = 0;
-    int deallocated   = 0;
-    int bytes         = 0;
-    int size_alloc    = 0;
-    int size_free     = 0;
-    int startup_count = 0;
-};
-
-bool& is_type_registry_available();
-
-struct TypeRegistry {
-    std::vector<Stat>                    stat;
-    bool                                 print_stats = false;
-    std::unordered_map<int, std::string> id_to_name;
-    int                                  type_counter = 0;
-
-    static TypeRegistry& instance() {
-        static TypeRegistry obj;
-        return obj;
-    }
-
-    TypeRegistry() { is_type_registry_available() = true; }
-
-    ~TypeRegistry() {
-        if (print_stats) {
-            show_alloc_stats();
-        }
-
-        is_type_registry_available() = false;
-    }
-};
-
-inline std::vector<Stat>& stats() { return TypeRegistry::instance().stat; }
-
-inline int& _get_id() { return TypeRegistry::instance().type_counter; }
-
-inline int _new_id() {
-    auto r = _get_id();
-    _get_id() += 1;
-    stats().push_back(Stat());
-    return r;
-}
-
-inline std::unordered_map<int, std::string>& typenames() {
-    return TypeRegistry::instance().id_to_name;
-}
-
-// Generate a unique ID for a given type
-template <typename T>
-int type_id() {
-    static int _id = _new_id();
-    return _id;
-}
-
-template <typename T>
-int _register_type_once(const char* str) {
-    if (!is_type_registry_available())
-        return 0;
-
-    auto tid    = type_id<T>();
-    auto result = typenames().find(tid);
-
-    if (result == typenames().end()) {
-        typenames().insert({type_id<T>(), str});
-    }
-    return tid;
-}
-
-// Insert a type name override
-template <typename T>
-const char* register_type(const char* str) {
-    static int _ = _register_type_once<T>(str);
-    return str;
-}
-
-// Return the type name of a function
-// You can specialize it to override
-template <typename T>
-const char* type_name() {
-    auto result = typenames().find(type_id<T>());
-
-    if (result == typenames().end()) {
-        const char* name = typeid(T).name();
-        register_type<T>(name);
-        return "<none>";
-    }
-
-    return (result->second).c_str();
-};
-
-inline const char* type_name(int class_id) {
-    std::string const& name = typenames()[class_id];
-    return name.c_str();
-};
-
-template <typename T>
-Stat& get_stat() {
-    return stats()[type_id<T>()];
-}
-
 // When type info is not available at compile time
 // often when deleting a derived class
-inline Stat& get_stat(int class_id) { return stats()[class_id]; }
+AllocationStat& get_stat(int class_id);
 
+template <typename T>
+AllocationStat& get_stat() {
+    return get_stat(type_id<T>());
+}
+ 
 }  // namespace meta
 
 inline void show_alloc_stats_on_destroy(bool enabled) {
@@ -184,7 +94,6 @@ class Allocator {
     static void deallocate(pointer p, std::size_t n) {
         manual_free(meta::type_id<T>(), n);
         Device::free(static_cast<void*>(p), n * sizeof(T));
-        return;
     }
 
     static T* allocate(std::size_t n, const void* = nullptr) {
@@ -215,8 +124,8 @@ inline SharedPtr<_Tp> make_shared(_Args&&... __args) {
                                      std::forward<_Args>(__args)...);
 }
 
-template <typename V>
-using UniquePtr = std::unique_ptr<V>;
+template <typename V, typename ...Args>
+using UniquePtr = std::unique_ptr<V, Args...>;
 
 template <typename _Tp, typename... _Args>
 inline UniquePtr<_Tp> make_unique(_Args&&... __args) {
@@ -224,6 +133,6 @@ inline UniquePtr<_Tp> make_unique(_Args&&... __args) {
     return UniquePtr<_Tp>(new (ptr) _Tp(std::forward<_Args>(__args)...));
 }
 
-}  // namespace lython
+}
 
 #endif

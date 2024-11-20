@@ -8,16 +8,19 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-
 #include <sstream>
+
+#include <fmt/core.h>
+#include <fmt/format.h>
 
 #include "dependencies/xx_hash.h"
 #include "utilities/allocator.h"
 
+
 #ifdef __linux__
-#    define KIWI_INLINE __attribute__((always_inline))
+#define KIWI_INLINE __attribute__((always_inline))
 #else
-#    define KIWI_INLINE __forceinline
+#define KIWI_INLINE __forceinline
 #endif
 
 // ---------------
@@ -63,29 +66,32 @@ using String = std::basic_string<char, std::char_traits<char>, AllocatorCPU<char
 using StringStream = std::basic_stringstream<char, std::char_traits<char>, AllocatorCPU<char>>;
 
 using StringView = std::string_view;
+
+struct Value;
+
+using Function = Value(*)(void*, Array<Value>&);
+
 }  // namespace lython
 
 // ------------
 namespace std {
 
-//*
-template <typename Char, typename Allocator>
-struct hash<std::basic_string<Char, std::char_traits<Char>, Allocator>> {
-    using Key = std::basic_string<Char, std::char_traits<Char>, Allocator>;
+// FIXME: BUILD_WEBASSEMBLY use clang by default so this is the same check
+#if !BUILD_WEBASSEMBLY
+template <>
+struct hash<lython::String> {
+    using Key = lython::String;
 
     std::size_t operator()(Key const& k) const noexcept {
         return lython::xx_hash_3((void*)k.data(), k.length());
-
         // #ifdef __linux__
         //         return std::_Hash_impl::hash(k.data(), k.length() * sizeof(Char));
         // #else
-        //         // FIXME: find a way to reuse the string hashing without transforming the string
-
-        //         auto a = std::hash<std::string>();
-        //         return a(std::string(k.c_str()));
+        //         return std::_Hash_array_representation(k.c_str(), k.size());
         // #endif
     }
 };
+#endif
 //*/
 
 }  // namespace std
@@ -93,11 +99,11 @@ struct hash<std::basic_string<Char, std::char_traits<Char>, Allocator>> {
 // ---------------
 namespace lython {
 
-template <class _Ty, class _Dx = std::default_delete<_Ty>>
-using Unique = std::unique_ptr<_Ty, _Dx>;
+template <class Ty, class Dx = std::default_delete<Ty>>
+using Unique = std::unique_ptr<Ty, Dx>;
 
-template <class _Ty>
-using Shared = std::shared_ptr<_Ty>;
+template <class Ty>
+using Shared = std::shared_ptr<Ty>;
 
 template <typename... Args>
 using Tuple = std::tuple<Args...>;
@@ -113,12 +119,29 @@ using Set = std::unordered_set<V, std::hash<V>, std::equal_to<V>, AllocatorCPU<V
 
 class LythonException: public std::exception {};
 
+template <typename T>
+struct Point {
+    T x;
+    T y;
+};
+
+
+inline String vformat(AllocatorCPU<char> alloc, fmt::string_view format_str, fmt::format_args args) {
+    using custom_memory_buffer = fmt::basic_memory_buffer<char, fmt::inline_buffer_size, AllocatorCPU<char>>;
+
+    auto buf = custom_memory_buffer(alloc);
+    fmt::vformat_to(std::back_inserter(buf), format_str, args);
+    return String(buf.data(), buf.size(), alloc);
+}
+
+template <typename ...Args>
+inline String format(fmt::string_view format_str, const Args& ... args) {
+    AllocatorCPU<char> alloc;
+    return vformat(alloc, format_str, fmt::make_format_args(args...));
+}
+
 }  // namespace lython
 
-#if __linux__
-#    define NOTHROW _GLIBCXX_TXN_SAFE_DYN _GLIBCXX_NOTHROW
-#else
-#    define NOTHROW
-#endif
+
 
 #endif

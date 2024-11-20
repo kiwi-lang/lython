@@ -1,6 +1,8 @@
 #ifndef LYTHON_NODEKIND_HEADER
 #define LYTHON_NODEKIND_HEADER
 
+#include <cstdint>
+
 namespace lython {
 
 // To make this more generic, I could have a StringDB that assign a integer to a constant string
@@ -12,9 +14,10 @@ enum class NodeKind : int8_t
 // clang-format off
 // Check X-MACRO trick
 // this is used to code gen a bunch of functions/types
-#define NODEKIND_ENUM(X, SECTION, EXPR, STMT, MOD, MATCH)\
+#define NODEKIND_ENUM(X, SECTION, EXPR, STMT, MOD, MATCH, VM)\
     X(Invalid, invalid)             \
     SECTION(EXPR_START)             \
+    EXPR(Exported, exported)        \
     EXPR(BoolOp, boolop)            \
     EXPR(NamedExpr, namedexpr)      \
     EXPR(BinOp, binop)              \
@@ -35,6 +38,7 @@ enum class NodeKind : int8_t
     EXPR(JoinedStr, joinedstr)      \
     EXPR(FormattedValue, formattedvalue)\
     EXPR(Constant, constant)        \
+    EXPR(Placeholder, placeholder)  \
     EXPR(Attribute, attribute)      \
     EXPR(Subscript, subscript)      \
     EXPR(Starred, starred)          \
@@ -93,7 +97,12 @@ enum class NodeKind : int8_t
     MATCH(MatchStar, matchstar)             \
     MATCH(MatchAs, matchas)                 \
     MATCH(MatchOr, matchor)                 \
-    SECTION(PAT_END)
+    SECTION(PAT_END)                        \
+    SECTION(VM_START)                       \
+    VM(CondJump, condjump)                  \
+    VM(Jump, jump)                          \
+    VM(VMStmt, vmstmt)                      \
+    VM(VMNativeFunction, nativefunction)
 
     #define X(name, _) name,
     #define SSECTION(name) name,
@@ -101,8 +110,9 @@ enum class NodeKind : int8_t
     #define STMT(name, _) name,
     #define MOD(name, _) name,
     #define MATCH(name, _) name,
+    #define VM(name, _) name,
 
-    NODEKIND_ENUM(X, SSECTION, EXPR, STMT, MOD, MATCH)
+    NODEKIND_ENUM(X, SSECTION, EXPR, STMT, MOD, MATCH, VM)
 
     #undef X
     #undef SSECTION
@@ -110,11 +120,23 @@ enum class NodeKind : int8_t
     #undef STMT
     #undef MOD
     #undef MATCH
+    #undef VM
 
     Size
 };
 // clang-format off
 
+
+#define KW_PASS(name, fun)
+#define KW_SECTION_PASS(name)
+
+#define KW_FOREACH_EXPR(EXPR) NODEKIND_ENUM(KW_PASS, KW_SECTION_PASS, EXPR, KW_PASS, KW_PASS, KW_PASS, KW_PASS)
+#define KW_FOREACH_STMT(STMT) NODEKIND_ENUM(KW_PASS, KW_SECTION_PASS, KW_PASS, STMT, KW_PASS, KW_PASS, KW_PASS)
+#define KW_FOREACH_MOD(MOD)   NODEKIND_ENUM(KW_PASS, KW_SECTION_PASS, KW_PASS, KW_PASS, MOD, KW_PASS, KW_PASS)
+#define KW_FOREACH_PAT(MATCH) NODEKIND_ENUM(KW_PASS, KW_SECTION_PASS, KW_PASS, KW_PASS, KW_PASS, MATCH, KW_PASS)
+#define KW_FOREACH_VM(VM)     NODEKIND_ENUM(KW_PASS, KW_SECTION_PASS, KW_PASS, KW_PASS, KW_PASS, KW_PASS, VM)
+#define KW_FOREACH_AST(ALL)   NODEKIND_ENUM(KW_PASS, KW_SECTION_PASS, ALL, ALL, ALL, ALL, KW_PASS)
+#define KW_FOREACH_ALL(ALL)   NODEKIND_ENUM(KW_PASS, KW_SECTION_PASS, ALL, ALL, ALL, ALL, ALL)
 
 }
 

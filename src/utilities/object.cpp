@@ -1,5 +1,6 @@
 #include "object.h"
 #include "logging/logging.h"
+#include "ast/nodes.h"
 
 namespace lython {
 
@@ -16,39 +17,20 @@ void GCObject::remove_child(GCObject* child, bool dofree) {
 
     // FIXME: this should never happen
     if (i == -1) {
-        error("Trying to remove (child: {}) from (parent: {}), (child->parent: {});"
-              "but the child was not found",
-              (void*)child,
-              (void*)this,
-              (void*)child->parent);
+        kwerror(outlog(), "Trying to remove (child: {}) from (parent: {}), (child->parent: {});"
+                "but the child was not found",
+                (void*)child,
+                (void*)this,
+                (void*)child->parent);
         return;
     } else {
-        info("Removed (child: {}) from (parent: {})", (void*)child, (void*)this);
+        kwinfo(outlog(), "Removed (child: {}) from (parent: {})", (void*)child, (void*)this);
     }
-    // assert(i != -1, "Should find child");
+    // lyassert(i != -1, "Should find child");
 
     Array<GCObject*>::iterator data = children.begin() + i;
     children.erase(data);
     child->parent = nullptr;
-
-    /*
-    auto elem = std::find(children.rbegin(), children.rend(), child);
-    assert(elem == children.rend(), "Should be a child");
-    // This is why people hate C++
-    //
-    // This removes the element found by the reverse iterator.
-    // Reverse iterator do not point to the found element
-    // but the element before it.
-    // erase is not specialized to take reverse iterator
-    // so we need to convert ifreet ourselves and KNOW that this is what is
-    // expected but nobody could have guessed that
-    auto n     = children.size();
-    auto found = std::next(elem).base();
-
-    assert(*found == child, "Child should match");
-    children.erase(found);
-    assert(n > children.size(), "Child was not removed");
-    */
 
     if (dofree) {
         free(child);
@@ -56,7 +38,7 @@ void GCObject::remove_child(GCObject* child, bool dofree) {
 }
 
 void GCObject::remove_child_if_parent(GCObject* child, bool dofree) {
-    if (child->parent == this) {
+    if (child && child->parent == this) {
         remove_child(child, dofree);
     }
 }
@@ -82,11 +64,27 @@ int in(GCObject* obj, Array<GCObject*>& visited) {
 
 void GCObject::dump_recursive(std::ostream& out, Array<GCObject*>& visited, int prev, int depth) {
     // Cycles should be impossible here
-    int    index   = prev < 0 ? visited.size() : prev;
+    int    index   = prev < 0 ? int(visited.size()) : prev;
     String warning = prev >= 0 ? "DUPLICATE" : "";
 
-    out << String(depth * 2, ' ') << index << ". " << meta::type_name(class_id) << warning
-        << std::endl;
+    if (class_id == meta::type_id<Constant>()) {
+        Constant* value = reinterpret_cast<Constant*>(this);
+
+        std::stringstream ss;
+        ss << value->value;
+
+        out << String(depth * 2, ' ') << index << ". " 
+            << meta::type_name(class_id) << warning << " " << ss.str()
+            << std::endl;
+
+    }
+    else {
+        out << String(depth * 2, ' ') << index << ". " 
+            << meta::type_name(class_id) << warning
+            << std::endl;
+    }
+
+    
 
     for (auto obj: children) {
         int found = in(obj, visited);
@@ -112,7 +110,7 @@ void GCObject::free(GCObject* child) {
     // Remove from parent right away
     if (child->parent != nullptr) {
         child->parent->remove_child(child, false);
-        assert(child->parent == nullptr, "parent should be null");
+        lyassert(child->parent == nullptr, "parent should be null");
     }
 
     private_free(child);
@@ -137,7 +135,7 @@ GCObject::~GCObject() {
     COZ_PROGRESS_NAMED("GCObject::delete");
     COZ_END("T::GCObject::delete");
 
-    assert(children.size() == 0,
+    lyassert(children.size() == 0,
            "Makes sure nobody added more nodes while we were busy destroying them");
 }
 

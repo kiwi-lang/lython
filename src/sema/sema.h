@@ -1,21 +1,20 @@
 #ifndef LYTHON_SEMA_HEADER
 #define LYTHON_SEMA_HEADER
 
-#include "ast/magic.h"
 #include "ast/ops.h"
 #include "ast/visitor.h"
 #include "sema/bindings.h"
 #include "sema/builtin.h"
 #include "sema/errors.h"
+#include "sema/importlib.h"
+#include "utilities/printing.h"
 #include "utilities/strings.h"
 
 // #define SEMA_ERROR(exception)      \
-//     error("{}", exception.what()); \
+//     kwerror("{}", exception.what()); \
 //     errors.push_back(std::unique_ptr<SemaException>(new exception));
 
 namespace lython {
-
-Array<String> python_paths();
 
 struct SemaVisitorTrait {
     using StmtRet = TypeExpr*;
@@ -95,17 +94,31 @@ struct SemaContext {
  *      Raised when importing a statement that was not found from a module
  *
  */
-struct SemanticAnalyser: BaseVisitor<SemanticAnalyser, false, SemaVisitorTrait> {
-    Bindings                              bindings;
-    bool                                  forwardpass = false;
+struct SemanticAnalyser: public BaseVisitor<SemanticAnalyser, false, SemaVisitorTrait> {
+    Bindings bindings;  // This should be outside of sema so it can live on after sema
+    bool     forwardpass = false;
     Array<std::unique_ptr<SemaException>> errors;
     Array<StmtNode*>                      nested;
     Array<String>                         namespaces;
     Dict<StringRef, bool>                 flags;
-    Array<String>                         paths = python_paths();
+    ImportLib*                            importsys = nullptr;
+    Array<Exported*>                      exported_stack;
+    bool                                  eager        = false;
+    ExprContext                           expr_context = ExprContext::Load;
+
+    Logger& semalog = lython::outlog();
+
+    // Should I remove the types for the runtime info
+    // the type can have their own query struct
+    // which might or might not be included in the final binary
+    SemanticAnalyser(ImportLib* import = ImportLib::instance()): importsys(import) {}
 
     // maybe conbine the semacontext with samespace
     Array<SemaContext> semactx;
+
+    bool has_errors() const;
+
+    BindingEntry const* lookup(Name_t* n);
 
     SemaContext& get_context() {
         static SemaContext global_ctx;
@@ -115,7 +128,20 @@ struct SemanticAnalyser: BaseVisitor<SemanticAnalyser, false, SemaVisitorTrait> 
         return semactx[semactx.size() - 1];
     }
 
+    template <typename... Args>
+    TypeExpr* exec_with_ctx(ExprContext ctx, Args... args) {
+        ExprContext old = expr_context;
+        expr_context    = ctx;
+        TypeExpr* r     = exec(args...);
+        expr_context    = old;
+        return r;
+    }
+
+    void show_diagnostic(std::ostream& out, class AbstractLexer* lexer = nullptr);
+
     bool is_type(TypeExpr* node, int depth, lython::CodeLocation const& loc);
+
+    bool reorder_arguments(Call* call, FunctionDef* def);
 
     template <typename T, typename... Args>
     void sema_error(Node* node, lython::CodeLocation const& loc, Args... args) {
@@ -126,7 +152,7 @@ struct SemanticAnalyser: BaseVisitor<SemanticAnalyser, false, SemaVisitorTrait> 
         exception->set_node(node);
 
         // use the LOC from parent function
-        lython::log(lython::LogLevel::Error, loc, "{}", exception->what());
+        lython::outlog().log(lython::LogLevel::Error, loc, "{}", exception->what());
     }
 
 #define SEMA_ERROR(expr, exception, ...) sema_error<exception>(expr, LOC, __VA_ARGS__)
@@ -147,15 +173,19 @@ struct SemanticAnalyser: BaseVisitor<SemanticAnalyser, false, SemaVisitorTrait> 
     bool typecheck(
         ExprNode* lhs, TypeExpr* lhs_t, ExprNode* rhs, TypeExpr* rhs_t, CodeLocation const& loc);
 
+    bool add_name(StringRef name, ExprNode* value, ExprNode* type);
     bool add_name(ExprNode* expr, ExprNode* value, ExprNode* type);
 
     String operator_function(TypeExpr* expr_t, StringRef op);
 
     Arrow* functiondef_arrow(FunctionDef* n, StmtNode* class_t, int depth);
+    void   record_ctor_attributes(ClassDef* n, FunctionDef* ctor, int depth);
 
     String generate_function_name(FunctionDef* n);
 
     Arrow* get_arrow(ExprNode* fun, ExprNode* type, int depth, int& offset, ClassDef*& cls);
+
+    Arrow* build_constructor_type(ExprNode* fun, ClassDef* cls, int depth);
 
     TypeExpr* oneof(Array<TypeExpr*> types) {
         if (types.size() > 0) {
@@ -166,32 +196,16 @@ struct SemanticAnalyser: BaseVisitor<SemanticAnalyser, false, SemaVisitorTrait> 
 
     Node* load_name(Name_t* variable);
 
-    Name* make_ref(Node* parent, String const& name, int varid = -1) {
-        return make_ref(parent, StringRef(name), varid);
-    }
+    Array<TypeExpr*> exec_body(Array<StmtNode*>& body, int depth);
+
+    Name* make_ref(Node* parent, StringRef const& name, ExprNode* type = nullptr);
+    Name* make_ref(Node* parent, String const& name, ExprNode* type = nullptr);
 
     void record_attributes(ClassDef*               n,
                            Array<StmtNode*> const& body,
                            Array<StmtNode*>&       methods,
                            FunctionDef**           ctor,
                            int                     depth);
-
-    Name* make_ref(Node* parent, StringRef const& name, int varid = -1) {
-        auto ref = parent->new_object<Name>();
-        ref->id  = name;
-
-        if (varid == -1) {
-            ref->varid = bindings.get_varid(ref->id);
-            assert(ref->varid != -1, "Should be able to find the name we are refering to");
-        } else {
-            ref->varid = varid;
-        }
-
-        ref->ctx     = ExprContext::Load;
-        ref->size    = int(bindings.bindings.size());
-        ref->dynamic = bindings.is_dynamic(ref->varid);
-        return ref;
-    }
 
     ClassDef* get_class(ExprNode* classref, int depth);
     TypeExpr* resolve_variable(ExprNode* node);
@@ -208,8 +222,9 @@ struct SemanticAnalyser: BaseVisitor<SemanticAnalyser, false, SemaVisitorTrait> 
 #define EXPR(name, fun)  FUNCTION_GEN(name, fun)
 #define STMT(name, fun)  FUNCTION_GEN(name, fun)
 #define MATCH(name, fun) FUNCTION_GEN(name, fun)
+#define VM(name, fun)
 
-    NODEKIND_ENUM(X, SSECTION, EXPR, STMT, MOD, MATCH)
+    NODEKIND_ENUM(X, SSECTION, EXPR, STMT, MOD, MATCH, VM)
 
 #undef X
 #undef SSECTION
@@ -217,6 +232,7 @@ struct SemanticAnalyser: BaseVisitor<SemanticAnalyser, false, SemaVisitorTrait> 
 #undef STMT
 #undef MOD
 #undef MATCH
+#undef VM
 
 #undef FUNCTION_GEN
 };

@@ -90,7 +90,8 @@
     X(tok_and, -58)        \
     X(tok_or, -59)         \
     X(tok_decorator, '@')  \
-    X(tok_comment, '#')
+    X(tok_comment, '#')    \
+    X(tok_formatstr, -60)  
 
 #define LYTHON_KEYWORDS(X)      \
     X("def", tok_def)           \
@@ -135,9 +136,8 @@
 
 namespace lython {
 
-enum TokenType
-{
-#define X(name, nb) name = nb,
+enum TokenType {
+#define X(name, nb) name = (nb),
     LYTHON_TOKEN(X)
 #undef X
 };
@@ -160,6 +160,8 @@ class Token {
     Token(TokenType t, int32 l, int32 c): _type(t), _line(l), _col(c) {}
 
     Token(int8 t, int32 l, int32 c): _type(t), _line(l), _col(c) {}
+
+    Token(): _type(tok_incorrect), _line(-1), _col(-1) {}
 
     int8  type() const { return _type; }
     int32 line() const { return _line; }

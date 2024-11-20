@@ -1,8 +1,8 @@
 #include "utilities/strings.h"
 #include "utilities/names.h"
 
-#include "ast/magic.h"
 #include "ast/nodes.h"
+#include "utilities/printing.h"
 
 namespace lython {
 
@@ -92,6 +92,23 @@ String strip(String const& v) {
     return result;
 }
 
+String strip_repeating(char c, String const& s) {
+    String cleaned;
+    cleaned.reserve(s.size());
+    int repeating = 0;
+    for (auto elem: s) {
+        if (elem == c) {
+            repeating += 1;
+        } else {
+            repeating = 0;
+        }
+        if (repeating <= 1) {
+            cleaned.push_back(elem);
+        }
+    }
+    return cleaned;
+}
+
 Array<String> split(char sep, String const& text) {
     int count = 1;
     for (auto c: text) {
@@ -115,7 +132,9 @@ Array<String> split(char sep, String const& text) {
         }
     }
 
-    frags.push_back(buffer);
+    if (!buffer.empty()) {
+        frags.push_back(buffer);
+    }
     return frags;
 }
 

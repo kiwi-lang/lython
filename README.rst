@@ -491,3 +491,52 @@ Linux only
    make build
    make run
 
+
+Roadmap
+-------
+* [X] function call
+* [X] basic classes
+* [X] basic binary function 
+* [X] base import
+* [ ] unicode / byte
+* [ ] array
+* [ ] native function expose
+* [ ] import system
+  * [ ] cache imports
+* [ ] VM raise
+* [ ] VM catch
+* [ ] VM yield (new UV maybe)
+* [ ] magic methods
+* [ ] kwargs/args
+* [ ] args reordering
+* [ ] context manager
+* [ ] decorator
+* [ ] fmt
+
+
+
+
+
+mkdir build-emcc
+cd build-emcc
+export TOOLCHAIN_FILE=../dependencies/emsdk/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake
+CMAKE_TOOLCHAIN_FILE=$TOOLCHAIN_FILE cmake ..
+
+
+export FREETYPE_LIBRARY=/home/newton/work/lython/dependencies/freetype/build
+export FREETYPE_INCLUDE_DIRS=/home/newton/work/lython/dependencies/freetype/build/include  
+export CMAKE_TOOLCHAIN_FILE=/home/newton/work/lython/dependencies/emsdk/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake 
+cmake -DSDL2TTF_VENDORED=1 -DNO_LLVM=1 ..
+
+
+
+cd build-emac
+conan install ../conan/ --profile emacscripten --build missing -of ../build-emac
+cmake .. -G "Unix Makefiles" -DCMAKE_TOOLCHAIN_FILE=./conan_toolchain.cmake -DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DSDL2TTF_VENDORED=1 -DNO_LLVM=1 -DCMAKE_BUILD_TYPE=Release
+cmake --build .
+
+
+cd build
+cmake .. -DCMAKE_INSTALL_PREFIX=../binaries
+cmake --build .
+cmake --install .

@@ -10,6 +10,7 @@
 #include "logging/logging.h"
 #include "parser/parser.h"
 #include "sema/sema.h"
+#include "vm/tree.h"
 
 namespace lython {
 
@@ -37,8 +38,6 @@ String strip2(String const& v) {
 }
 
 int InternalCmd::main(argparse::ArgumentParser const& args) {
-    //
-
     std::string file = "";
     if (args.is_used("--file")) {
         file = args.get<std::string>("--file");
@@ -49,7 +48,7 @@ int InternalCmd::main(argparse::ArgumentParser const& args) {
     bool show_alloc_layout = true;
     bool show_parsing      = args.get<bool>("--parsing");
 
-    info("Enter");
+    kwinfo(outlog(), "Enter");
 
     std::unique_ptr<AbstractBuffer> reader;
     if (file != "") {
@@ -158,15 +157,7 @@ int InternalCmd::main(argparse::ArgumentParser const& args) {
                 std::cout << "Sema Diagnostic dump\n";
                 std::cout << std::string(80, '-') << '\n';
 
-                SemaErrorPrinter printer(std::cout, &lex);
-
-                std::stringstream ss;
-                for (auto& diag: sema.errors) {
-                    std::cout << "  ";
-                    printer.print(*diag.get());
-                    std::cout << "\n";
-                }
-
+                sema.show_diagnostic(std::cout, &lex);
                 std::cout << std::string(80, '-') << '\n';
             }
 
@@ -177,7 +168,7 @@ int InternalCmd::main(argparse::ArgumentParser const& args) {
             }
 
             if (has_circle(mod)) {
-                warn("Circle will cause infinite recursion");
+                kwwarn(outlog(), "Circle will cause infinite recursion");
             }
 
             // Bindings Dump

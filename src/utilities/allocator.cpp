@@ -1,6 +1,5 @@
 #include <cstdlib>
 #include <iostream>
-#include <spdlog/fmt/bundled/core.h>
 
 #include "dtypes.h"
 
@@ -21,13 +20,19 @@
 #endif
 
 namespace lython {
+
 namespace meta {
-bool& is_type_registry_available() {
-    static bool avail = false;
-    return avail;
+
+    // When type info is not available at compile time
+// often when deleting a derived class
+AllocationStat& get_stat(int class_id) { 
+    auto& db = TypeRegistry::instance().id_to_meta;
+    return db[class_id].stat;
 }
 
-}  // namespace meta
+}
+
+
 namespace device {
 
 void* CPU::malloc(std::size_t n) {
@@ -89,13 +94,12 @@ bool CPU::free(void* ptr, std::size_t) {
 void show_alloc_stats() {
     metadata_init_names();
 
-    auto const&                                 stat  = meta::stats();
-    std::unordered_map<int, std::string> const& names = meta::typenames();
+    auto& db = meta::TypeRegistry::instance().id_to_meta;
 
-    auto line = String(4 + 40 + 10 + 10 + 10 + 10 + 10 + 10 + 7 + 1, '-');
+    auto line = String(4 + 50 + 10 + 10 + 10 + 10 + 10 + 10 + 7 + 1, '-');
 
     std::cout << line << '\n';
-    std::cout << fmt::format("{:>4} {:>41} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}\n",
+    std::cout << fmt::format("{:>4} {:>50} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}\n",
                              "id",
                              "name",
                              "alloc",
@@ -108,31 +112,37 @@ void show_alloc_stats() {
     std::cout << line << '\n';
     int total = 0;
 
-    for (size_t i = 0; i < stat.size(); ++i) {
-        std::string name = "";
-        try {
-            name = names.at(int(i));
-        } catch (std::out_of_range&) { name = ""; }
+    for (auto& item: db) {
+        meta::ClassMetadata& klass = item.second;
 
-        auto init      = stat[i].startup_count;
-        auto alloc     = stat[i].allocated - init;
-        auto dealloc   = stat[i].deallocated;
-        auto size      = stat[i].size_alloc;
-        auto size_free = stat[i].size_free;
-        auto bytes     = stat[i].bytes;
+        std::string name = klass.name;
+        auto& stat = klass.stat;
+
+        auto init      = stat.startup_count;
+        auto alloc     = stat.allocated - init;
+        auto dealloc   = stat.deallocated;
+        auto size      = stat.size_alloc;
+        auto size_free = stat.size_free;
+        auto bytes     = stat.bytes;
 
         total += size * bytes;
 
         if (alloc != 0) {
-            std::cout << fmt::format("{:>4} {:>41} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}\n",
-                                     i,
-                                     String(name.c_str()),
-                                     alloc,
-                                     dealloc,
-                                     alloc - dealloc,
-                                     size,
-                                     size_free,
-                                     bytes);
+            int remain = alloc - dealloc;
+            std::stringstream ss;
+            if (remain > 0) {
+                ss << remain;
+            }
+            std::cout << fmt::format(
+                "{:>4} {:>50} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}\n",
+                klass.type_id,
+                String(name.c_str()),
+                alloc,
+                dealloc,
+                ss.str(),
+                size,
+                size_free,
+                bytes);
         }
     }
     std::cout << "Total: " << total << std::endl;

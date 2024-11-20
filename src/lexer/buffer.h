@@ -126,6 +126,11 @@ class StringBuffer: public AbstractBuffer {
         init();
     }
 
+    StringBuffer(std::string const& code, String const& file = "c++ string"):
+        _code(std::begin(code), std::end(code)), _file_name(file) {
+        init();
+    }
+
     char getc() override {
         if (_pos >= _code.size())
             return EOF;
@@ -184,18 +189,34 @@ class StringBuffer: public AbstractBuffer {
     }
 };
 
-// Quick solution but not satisfactory
+// Quick solution but not satisfactorya =
 class ConsoleBuffer: public AbstractBuffer {
     public:
-    ConsoleBuffer(): _file_name("console") { init(); }
+    ConsoleBuffer(bool init_now = true): _file_name("console") {
+        if (init_now)
+            init();
+    }
 
-    char getc() override { return char(std::getchar()); }
+    char getc() override;
 
     const String& file_name() override { return _file_name; }
 
     ~ConsoleBuffer() override;
 
+    void fetch_next_line();
+
+    // returns true if the ligne should be discarded
+    virtual bool filter(String const& str) {
+        return false;
+    }
+
+    virtual void on_next_line() {}
+
     private:
+    int read_size = 0;
+
+    int          i = 0;
+    String       buffer;
     const String _file_name;
 };
 

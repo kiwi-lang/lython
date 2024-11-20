@@ -1,11 +1,11 @@
-#include "ast/magic.h"
+#include "utilities/printing.h"
 #include "ast/nodes.h"
 #include "ast/visitor.h"
+#include "compatibility/compatibility.h"
 #include "dependencies/fmt.h"
 #include "lexer/unlex.h"
 #include "logging/logging.h"
 #include "parser/parsing_error.h"
-#include "perf/perf.h"
 #include "utilities/strings.h"
 
 namespace lython {
@@ -17,9 +17,8 @@ struct CircleTrait {
     using ModRet  = bool;
     using PatRet  = bool;
 
-    enum {
-        MaxRecursionDepth = LY_MAX_VISITOR_RECURSION_DEPTH
-    };
+    enum
+    { MaxRecursionDepth = LY_MAX_VISITOR_RECURSION_DEPTH };
 };
 
 #define ReturnType bool
@@ -38,12 +37,14 @@ struct Circle: BaseVisitor<Circle, true, CircleTrait> {
 
         for (Node const* item: visited) {
             if (item == obj) {
-                trace(depth, "Duplicate is: {}", meta::type_name(item->class_id));
+                kwtrace(outlog(), depth, "Duplicate is: {}", meta::type_name(item->class_id));
                 return true;
             }
         }
 
-        visited.push_back(obj);
+        if (cast<Name>(obj) == nullptr) {
+            visited.push_back(obj);
+        }
         return false;
     }
 
@@ -76,10 +77,11 @@ struct Circle: BaseVisitor<Circle, true, CircleTrait> {
         return Super::exec(stmt, depth);
     }
 
-    template <typename T>
+    template <typename T> 
     bool any_of(Array<T> const& elts, int depth) {
-        // std::any_of produce so much asm crap
-        //
+        // std::any_of produce so much asm crap in gcc-12 & clang-15
+        // zig++ generates fine code though
+        // msvc generates the worst code by far
         for (auto const& elt: elts) {  // NOLINT
             if (exec(elt, depth))
                 return true;
@@ -134,8 +136,9 @@ struct Circle: BaseVisitor<Circle, true, CircleTrait> {
 #define STMT(name, fun)  FUNCTION_GEN(name, fun, ReturnType)
 #define MOD(name, fun)   FUNCTION_GEN(name, fun, ReturnType)
 #define MATCH(name, fun) FUNCTION_GEN(name, fun, ReturnType)
+#define VM(name, fun) 
 
-    NODEKIND_ENUM(X, SECTION, EXPR, STMT, MOD, MATCH)
+    NODEKIND_ENUM(X, SECTION, EXPR, STMT, MOD, MATCH, VM)
 
 #undef X
 #undef SECTION
@@ -401,6 +404,10 @@ ReturnType Circle::call(Call const* self, int depth) {
 
 ReturnType Circle::constant(Constant const* self, int depth) { return false; }
 
+Circle::ExprRet Circle::placeholder(Placeholder_t* self, int depth) {
+    return false;
+} 
+
 ReturnType Circle::namedexpr(NamedExpr const* self, int depth) {
     return exec(self->target, depth) || exec(self->value, depth);
 }
@@ -635,7 +642,10 @@ ReturnType Circle::dicttype(DictType const* self, int depth) {
 
 ReturnType Circle::settype(SetType const* self, int depth) { return false; }
 
-ReturnType Circle::name(Name const* self, int depth) { return false; }
+ReturnType Circle::name(Name const* self, int depth) { 
+    //
+    return false; 
+}
 
 ReturnType Circle::arraytype(ArrayType const* self, int depth) { return exec(self->value, depth); }
 
@@ -690,6 +700,13 @@ bool Circle::withitem(WithItem const& self, int depth) {
 
 ReturnType Circle::comment(Comment const* n, int depth) { return false; }
 
+
+ReturnType Circle::exported(Exported const * n, int depth) {
+    //return exec(n->node, depth);
+    return false;
+}
+
+
 bool Circle::arguments(Arguments const& self, int depth) {
     int i = 0;
 
@@ -728,6 +745,10 @@ bool Circle::arguments(Arguments const& self, int depth) {
 
     return false;
 }
+
+// ReturnType Circle::condjump(CondJump_t* n, int depth) {
+//     return false; 
+// }
 
 bool has_circle(ExprNode const* obj) { return Circle().exec(obj, 0); }
 bool has_circle(Pattern const* obj) { return Circle().exec(obj, 0); }

@@ -8,6 +8,8 @@
 #include <string_view>
 #include <unordered_map>
 
+#include <fmt/core.h>
+
 #include "dtypes.h"
 #include "logging/exceptions.h"
 #include "logging/logging.h"
@@ -26,6 +28,7 @@ NEW_EXCEPTION(NameTaken);
     }
 
 class StringRef;
+
 
 // Should be careful to only use this for name-like strings
 // Since we keep the strings forever
@@ -74,7 +77,11 @@ class StringDatabase {
     StringEntry& get(std::size_t i) {
         size_t block = i / block_size;
         size_t entry = i % block_size;
-        return (*reverse[block])[entry];
+
+        if (block < reverse.size()){
+            return (*reverse[block])[entry];
+        }
+        return (*reverse[0])[0];
     }
 
     StringEntry const& get(std::size_t i) const {
@@ -83,9 +90,11 @@ class StringDatabase {
         return (*reverse[block])[entry];
     }
 
-    // Array<StringEntry>            strings; // String storage
+// Array<StringEntry>            strings; // String storage
+#if !BUILD_WEBASSEMBLY
     mutable std::recursive_mutex mu;
-    mutable double               wait_time;
+#endif
+    mutable double wait_time;
 
     friend class StringRef;
     friend bool _metadata_init_names();
@@ -108,23 +117,31 @@ class StringDatabase {
 // Very Cheap string reference
 class StringRef {
     public:
-    StringRef(std::size_t r = 0): ref(StringDatabase::instance().inc(r)) {
-        assert(ref < StringDatabase::instance().count(), "StringRef is valid");
+    StringRef():
+        StringRef(std::size_t(0))
+    {}
+
+    explicit StringRef(std::size_t r): ref(StringDatabase::instance().inc(r)) {
+        lyassert(ref < StringDatabase::instance().count(), "StringRef is valid");
         STRING_VIEW(debug_view = StringDatabase::instance()[ref]);
     }
 
+    explicit StringRef(const char* str): StringRef(String(str))
+    {
+    }
+
     StringRef(String const& name): ref(StringDatabase::instance().string(name).ref) {
-        assert(ref < StringDatabase::instance().count(), "StringRef is valid");
+        lyassert(ref < StringDatabase::instance().count(), "StringRef is valid");
         STRING_VIEW(debug_view = StringDatabase::instance()[ref]);
     }
 
     StringRef(StringRef const& name): ref(StringDatabase::instance().inc(name.ref)) {
-        assert(ref < StringDatabase::instance().count(), "StringRef is valid");
+        lyassert(ref < StringDatabase::instance().count(), "StringRef is valid");
         STRING_VIEW(debug_view = StringDatabase::instance()[ref]);
     }
 
     StringRef(StringRef const&& name): ref(StringDatabase::instance().inc(name.ref)) {
-        assert(ref < StringDatabase::instance().count(), "StringRef is valid");
+        lyassert(ref < StringDatabase::instance().count(), "StringRef is valid");
         STRING_VIEW(debug_view = StringDatabase::instance()[ref]);
     }
 
@@ -176,7 +193,20 @@ inline void show_string_stats_on_destroy(bool enabled) {
     StringDatabase::instance().print_stats = enabled;
 }
 
+
+struct Field {
+    Field(StringRef name, std::size_t o, std::size_t s, StringRef type_name):
+        name(name), offset(o), size(s), type_name(type_name)
+    {}
+
+    StringRef name;
+    std::size_t offset;
+    std::size_t size;
+    StringRef type_name;
+};
+
 }  // namespace lython
+
 
 template <>
 struct std::hash<lython::StringRef> {
@@ -184,5 +214,6 @@ struct std::hash<lython::StringRef> {
         return std::hash<std::size_t>{}(s.__id__());
     }
 };
+
 
 #endif

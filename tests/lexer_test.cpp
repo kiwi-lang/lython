@@ -1,10 +1,14 @@
-#include "cases.h"
-#include "samples.h"
 
+#include <catch2/catch_all.hpp>
+
+// Kiwi
 #include "lexer/lexer.h"
 #include "utilities/strings.h"
 
-#include <catch2/catch.hpp>
+// Testing
+// #include "cases.h"
+#include "cases_sample.h"
+#include "libtest.h"
 
 using namespace lython;
 
@@ -14,7 +18,10 @@ String lex_it(String code) {
 
     StringStream ss;
     lex.print(ss);
-    return ss.str();
+    auto str =  ss.str();;
+
+    std::cout << str << "\n";
+    return str;
 }
 
 #define TEST_LEXING(code) \
@@ -25,12 +32,21 @@ TEST_CASE("Lexer") {
     IMPORT_TEST(TEST_LEXING)
 }
 
+
+TEST_CASE("Lexer_integer") {
+    TEST_LEXING([](){ return "1"; })
+}
+
+TEST_CASE("Lexer_float") {
+    TEST_LEXING([](){ return "1.0"; })
+}
+
 /*
 void run_testcase(String const &name, Array<TestCase> cases) {
-    info("Testing {}", name);
+    kwinfo("Testing {}", name);
     for (auto &c: cases) {
         REQUIRE(strip(lex_it(c.code)) == strip(c.code));
-        info("<<<<<<<<<<<<<<<<<<<<<<<< DONE");
+        kwinfo("<<<<<<<<<<<<<<<<<<<<<<<< DONE");
     }
 }
 

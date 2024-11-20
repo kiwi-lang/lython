@@ -7,6 +7,7 @@
 #include "lexer/buffer.h"
 #include "lexer/token.h"
 #include "utilities/trie.h"
+#include "utilities/helpers.h"
 
 #include "dtypes.h"
 
@@ -20,22 +21,8 @@
 
 namespace lython {
 
-template <typename T, typename N>
-bool in(T const& e, N const& v) {
-    return e == v;
-}
-
-template <typename T, typename N, typename... Args>
-bool in(T const& e, N const& v, Args... args) {
-    return e == v || in(e, args...);
-}
-
-template <typename T, typename... Args>
-bool in(T const& e, Args... args) {
-    return in(e, args...);
-}
-
 struct OpConfig {
+    String         operator_name;
     int            precedence       = -1;
     bool           left_associative = true;
     TokenType      type             = TokenType::tok_eof;
@@ -44,16 +31,20 @@ struct OpConfig {
     BoolOperator   boolkind         = BoolOperator::None;
     CmpOperator    cmpkind          = CmpOperator::None;
 
-    void print(std::ostream& out) const {
-        out << to_string(type) << "(pred: " << precedence << ") "
-            << "(binary: " << int(binarykind) << ") "
-            << "(unary: " << int(unarykind) << ") "
-            << "(bool: " << int(boolkind) << ") "
-            << "(cmp: " << int(cmpkind) << ") ";
+    operator bool() {
+        return binarykind != BinaryOperator::None ||
+        unarykind != UnaryOperator::None ||
+        boolkind != BoolOperator::None ||
+        cmpkind != CmpOperator::None 
+        ;
     }
 };
 
+std::ostream& operator<<(std::ostream& out, OpConfig const& op);
+
+
 Dict<String, OpConfig> const& default_precedence();
+Array<OpConfig> const& all_operators();
 
 class LexerOperators {
     public:
@@ -84,7 +75,12 @@ class AbstractLexer {
 
     virtual Token const& token() = 0;
 
+    virtual char peekc() const { return '\0'; }
+
     virtual const String& file_name() = 0;
+
+    virtual int get_mode() const  { return 0; }
+    virtual void set_mode(int mode) {}
 
     // print tokens with their info
     ::std::ostream& debug_print(::std::ostream& out);
@@ -145,6 +141,11 @@ class ReplayLexer: public AbstractLexer {
     Array<Token>& tokens;
 };
 
+enum class LexerMode {
+    Default = 0,
+    Character = 1
+};
+
 class Lexer: public AbstractLexer {
     public:
     Lexer(AbstractBuffer& reader):
@@ -158,7 +159,11 @@ class Lexer: public AbstractLexer {
         }
         return _token;
     }
-    Token const& next_token() override final;
+
+    int get_mode() const override final;
+    void set_mode(int mode) override final;
+    Token const& format_tokenizer() ;
+    Token const& next_token() override;
     Token const& peek_token() override final {
         // we can only peek ahead once
         if (_buffer.size() > 0)
@@ -183,8 +188,9 @@ class Lexer: public AbstractLexer {
     }
 
     const String& file_name() override { return _reader.file_name(); }
+    char peekc() const override { return _reader.peek(); }
 
-    private:
+    protected:
     int             _count = 0;
     AbstractBuffer& _reader;
     Token           _token{dummy()};
@@ -192,6 +198,9 @@ class Lexer: public AbstractLexer {
     int32           _oindent;
     LexerOperators  _operators;
     Array<Token>    _buffer;
+    bool            _fmtstr = false;
+    char            _quote;
+    int             _quotes = 0;
 
     // shortcuts
 

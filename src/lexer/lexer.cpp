@@ -1,72 +1,92 @@
-#include <spdlog/fmt/bundled/core.h>
-
 #include "lexer.h"
 #include "unlex.h"
 #include "utilities/strings.h"
 
 namespace lython {
 
-Dict<String, OpConfig> const& default_precedence() {
+Array<OpConfig> const& all_operators() {
     // clang-format off
-    static Dict<String, OpConfig> val = {
+    static Array<OpConfig> ops = {
         // Predecence, Left Associative, is_binary, is_bool, can_be_unary, kind
         // Arithmetic
-        {"+",       {20, true , tok_operator, BinaryOperator::Add, UnaryOperator::UAdd}},
-        {"-",       {20, true , tok_operator, BinaryOperator::Sub, UnaryOperator::USub}},
-        {"%",       {10, true , tok_operator, BinaryOperator::Mod}},
-        {"*",       {30, true , tok_operator, BinaryOperator::Mult}},
-        {"**",      {40, true , tok_operator, BinaryOperator::Pow}},
-        {"/",       {30, true , tok_operator, BinaryOperator::Div}},
-        {"//",      {30, true , tok_operator, BinaryOperator::FloorDiv}},
-        {".*",      {20, true , tok_operator, BinaryOperator::EltMult}},
-        {"./",      {20, true , tok_operator, BinaryOperator::EltDiv}},
+        {"+",       20, true , tok_operator, BinaryOperator::Add, UnaryOperator::UAdd},
+        {"-",       20, true , tok_operator, BinaryOperator::Sub, UnaryOperator::USub},
+        {"%",       10, true , tok_operator, BinaryOperator::Mod},
+        {"*",       30, true , tok_operator, BinaryOperator::Mult},
+        {"**",      40, true , tok_operator, BinaryOperator::Pow},
+        {"/",       30, true , tok_operator, BinaryOperator::Div},
+        {"//",      30, true , tok_operator, BinaryOperator::FloorDiv},
+        {".*",      20, true , tok_operator, BinaryOperator::EltMult},
+        {"./",      20, true , tok_operator, BinaryOperator::EltDiv},
         //*/ Shorthand
-        {"+=",      {50, true , tok_augassign, BinaryOperator::Add}},
-        {"-=",      {50, true , tok_augassign, BinaryOperator::Sub}},
-        {"*=",      {50, true , tok_augassign, BinaryOperator::Mult}},
-        {"/=",      {50, true , tok_augassign, BinaryOperator::Div}},
-        {"%=",      {50, true , tok_augassign, BinaryOperator::Mod}},
-        {"**=",     {50, true , tok_augassign, BinaryOperator::Pow}},
-        {"//=",     {50, true , tok_augassign, BinaryOperator::FloorDiv}},
+        {"+=",      50, true , tok_augassign, BinaryOperator::Add},
+        {"-=",      50, true , tok_augassign, BinaryOperator::Sub},
+        {"*=",      50, true , tok_augassign, BinaryOperator::Mult},
+        {"/=",      50, true , tok_augassign, BinaryOperator::Div},
+        {"%=",      50, true , tok_augassign, BinaryOperator::Mod},
+        {"**=",     50, true , tok_augassign, BinaryOperator::Pow},
+        {"//=",     50, true , tok_augassign, BinaryOperator::FloorDiv},
         //*/
         // Assignment
-        {"=",       {50, true , tok_assign}},
+        {"=",       50, true , tok_assign},
         // Logic
-        {"~",       {40, false, tok_operator, BinaryOperator::None, UnaryOperator::Invert}},
-        {"<<",      {40, false, tok_operator, BinaryOperator::LShift}},
-        {">>",      {40, false, tok_operator, BinaryOperator::RShift}},
-        {"^",       {40, false, tok_operator, BinaryOperator::BitXor}},
-        {"&",       {40, true , tok_operator, BinaryOperator::BitAnd}},
-        {"and",     {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::And}},
-        {"|",       {40, true , tok_operator, BinaryOperator::BitOr}},
-        {"or",      {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::Or}},
-        {"!",       {40, true , tok_operator, BinaryOperator::None, UnaryOperator::Not}},
-        {"not",     {40, true , tok_operator, BinaryOperator::None, UnaryOperator::Not}},
+        {"~",       40, false, tok_operator, BinaryOperator::None, UnaryOperator::Invert},
+        {"<<",      40, false, tok_operator, BinaryOperator::LShift},
+        {">>",      40, false, tok_operator, BinaryOperator::RShift},
+        {"^",       40, false, tok_operator, BinaryOperator::BitXor},
+        {"&",       40, true , tok_operator, BinaryOperator::BitAnd},
+        {"and",     40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::And},
+        {"|",       40, true , tok_operator, BinaryOperator::BitOr},
+        {"or",      40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::Or},
+        {"!",       40, true , tok_operator, BinaryOperator::None, UnaryOperator::Not},
+        {"not",     40, true , tok_operator, BinaryOperator::None, UnaryOperator::Not},
         // Comparison
-        {"==",      {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::Eq}},
-        {"!=",      {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::NotEq}},
-        {">=",      {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::GtE}},
-        {"<=",      {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::LtE}},
-        {">",       {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::Gt}},
-        {"<",       {40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::Lt}},
+        {"==",      40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::Eq},
+        {"!=",      40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::NotEq},
+        {">=",      40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::GtE},
+        {"<=",      40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::LtE},
+        {">",       40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::Gt},
+        {"<",       40, true , tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::Lt},
         // membership
-        {"in",      {40, false, tok_in      , BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::In}},
-        {"not in",  {40, false, tok_in      , BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::NotIn}},
+        {"in",      40, false, tok_in      , BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::In},
+        {"not in",  40, false, tok_in      , BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::NotIn},
         // identity
-        {"is",      {40, false, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::Is}},
-        {"is not",  {40, false, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::IsNot}},
+        {"is",      40, false, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::Is},
+        {"is not",  40, false, tok_operator, BinaryOperator::None, UnaryOperator::None, BoolOperator::None, CmpOperator::IsNot},
         // Not an operator but we use same data structure for parsing
-        {"->",      {10, false, tok_arrow}},
-        {":=",      {10, false, tok_walrus}},
-        {":",       {10, false, (TokenType)':'}},
-        {".",       {60, true , tok_dot}},
+        {"->",      10, false, tok_arrow},
+        {":=",      10, false, tok_walrus},
+        {":",       10, false, (TokenType)':'},
+        {".",       60, true , tok_dot}
     };
     // clang-format on
+    return ops;
+}
+
+std::ostream& operator<<(std::ostream& out, OpConfig const& op) {
+        return out << to_string(op.type) << "(pred: " << op.precedence << ") "
+            << "(binary: " << int(op.binarykind) << ") "
+            << "(unary: " << int(op.unarykind) << ") "
+            << "(bool: " << int(op.boolkind) << ") "
+            << "(cmp: " << int(op.cmpkind) << ") ";
+    }
+
+Dict<String, OpConfig> _make_op_dict() {
+    Dict<String, OpConfig> ops;
+    for(auto const& op: all_operators()) {
+        ops[op.operator_name] = op;
+    }
+    return ops;
+}
+
+Dict<String, OpConfig> const& default_precedence() 
+{    
+    static Dict<String, OpConfig> val = _make_op_dict();
     return val;
 }
 
-std::ostream& AbstractLexer::debug_print(std::ostream& out) {
-
+std::ostream& AbstractLexer::debug_print(std::ostream& out) 
+{
     Token t = next_token();
     int   k = 1;
     do {
@@ -96,6 +116,22 @@ std::ostream& AbstractLexer::print(std::ostream& out) {
 
     return out;
 }
+
+int Lexer::get_mode() const {
+    return int(_fmtstr);
+}
+
+void Lexer::set_mode(int mode) {
+    _fmtstr = mode > 0;
+}
+
+Token const& Lexer::format_tokenizer() {
+    char c = peek();
+    nextc();
+    return make_token(c);
+}
+
+
 Token const& Lexer::next_token() {
     _count += 1;
 
@@ -104,6 +140,10 @@ Token const& Lexer::next_token() {
         _token = _buffer[_buffer.size() - 1];
         _buffer.pop_back();
         return _token;
+    }
+
+    if (_fmtstr) {
+        return format_tokenizer();
     }
 
     char c = peek();
@@ -210,7 +250,7 @@ Token const& Lexer::next_token() {
 
     // Identifiers
     // -----------
-    if ((isalpha(c) || c == '_') && peek() != '"') {
+    if ((isalpha(c) || c == '_')) {
         String identifier;
 
         // FIXME: check that ident can be an identifier
@@ -218,10 +258,6 @@ Token const& Lexer::next_token() {
 
         while (is_identifier(c = nextc())) {
             identifier.push_back(c);
-        }
-
-        if (c == 'f') {
-            goto strings;
         }
 
         // is it a string operator (is, not, in, and, or) ?
@@ -257,6 +293,11 @@ Token const& Lexer::next_token() {
             if (result != keywords().end()) {
                 return make_token(result->second);
             }
+        }
+
+        // is it followed by a quote
+        if (peek() == '"' || peek() == '\'') {
+            return make_token(tok_formatstr, identifier);
         }
 
         // then it must be an identifier
@@ -324,33 +365,21 @@ Token const& Lexer::next_token() {
         return make_token(ntype, num);
     }
 
-// Strings
-// --------------------------------------------------
-strings:
-
-    // Formated string
-    // ---------------
-    // upper/lower and combinaison are available
-    // fr & rf & br & rb
-    if (c == 'f' && peek() == '"') {}
-
-    // Raw string
-    if (c == 'r' && peek() == '"') {}
-
-    // byte string
-    if (c == 'b' && peek() == '"') {}
+    // Strings
+    // --------------------------------------------------
 
     // Regular string
     // --------------
-    if (c == '"') {
+    if (c == '"' || c == '\'') {
+        char      end = c;
         String    str;
         TokenType tok = tok_string;
         char      c2  = nextc();
         char      c3  = '\0';
 
-        if (c2 == '"') {
+        if (c2 == end) {
             char c3 = nextc();
-            if (c3 == '"') {
+            if (c3 == end) {
                 tok = tok_docstring;
             } else {
                 str.push_back(c2);
@@ -361,18 +390,18 @@ strings:
         }
 
         if (tok == tok_string)
-            while ((c = nextc()) != '"' && c != EOF) {
+            while ((c = nextc()) != end && c != EOF) {
                 str.push_back(c);
             }
         else {
             while (c != EOF) {
                 c = nextc();
 
-                if (c == '"') {
+                if (c == end) {
                     c2 = nextc();
-                    if (c2 == '"') {
+                    if (c2 == end) {
                         c3 = nextc();
-                        if (c3 == '"') {
+                        if (c3 == end) {
                             break;
                         } else {
                             str.push_back(c);

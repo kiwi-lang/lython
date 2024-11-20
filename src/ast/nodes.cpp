@@ -1,12 +1,19 @@
-#include "nodes.h"
-#include "magic.h"
-#include "ops.h"
 
+#include "ast/values/value.h"
+#include "nodes.h"
+#include "utilities/printing.h"
+
+// #include "ast/meta.generated.h"
 namespace lython {
 
 ExprNode* None();
 ExprNode* True();
 ExprNode* False();
+
+std::ostream& operator<<(std::ostream& out, UnaryOperator const& v) ;
+std::ostream& operator<<(std::ostream& out, BinaryOperator const& v) ;
+std::ostream& operator<<(std::ostream& out, BoolOperator const& v) ;
+std::ostream& operator<<(std::ostream& out, CmpOperator const& v) ;
 
 // --------------------------------------------------------------------
 // to-string
@@ -22,9 +29,10 @@ String str(NodeKind k) {
 #define STMT(name, _)  CASEGEN(name)
 #define MOD(name, _)   CASEGEN(name)
 #define MATCH(name, _) CASEGEN(name)
+#define VM(name, _) CASEGEN(name)
 
     switch (k) {
-        NODEKIND_ENUM(X, SECTION, EXPR, STMT, MOD, MATCH)
+        NODEKIND_ENUM(X, SECTION, EXPR, STMT, MOD, MATCH, VM)
 
     default: break;
     }
@@ -35,61 +43,66 @@ String str(NodeKind k) {
 #undef STMT
 #undef MOD
 #undef MATCH
+#undef VM
     return "<invalid>";
 }
 
-void print(BoolOperator const& v, std::ostream& out) {
+std::ostream& operator<<(std::ostream& out, BoolOperator const& v) {
     switch (v) {
 #define OP(name, kw, _)        \
     case BoolOperator::name: { \
         out << #kw;            \
-        return;                \
+        return out;                \
     }
         BOOL_OPERATORS(OP)
 
     default: break;
 #undef OP
     }
+    return out;
 }
 
-void print(BinaryOperator const& v, std::ostream& out) {
+std::ostream& operator<<(std::ostream& out, BinaryOperator const& v) {
     switch (v) {
 #define OP(name, kw, _)          \
     case BinaryOperator::name: { \
         out << #name;            \
-        return;                  \
+        return out;                  \
     }
         BINARY_OPERATORS(OP)
 
     default: break;
 #undef OP
     }
+    return out;
 }
 
-void print(UnaryOperator const& v, std::ostream& out) {
+std::ostream& operator<<(std::ostream& out, UnaryOperator const& v) {
     switch (v) {
 #define OP(name, kw, _)         \
     case UnaryOperator::name: { \
         out << #name;           \
-        return;                 \
+        return out;                 \
     }
         UNARY_OPERATORS(OP)
 
 #undef OP
     }
+    return out;
 }
 
-void print(CmpOperator const& v, std::ostream& out) {
+std::ostream& operator<<(std::ostream& out, CmpOperator const& v) {
     switch (v) {
 #define OP(name, kw, _)       \
     case CmpOperator::name: { \
         out << #name;         \
-        return;               \
+        return out;               \
     }
         COMP_OPERATORS(OP)
 
 #undef OP
     }
+    return out;
 }
 
 void ClassDef::Attr::dump(std::ostream& out) {
@@ -202,7 +215,7 @@ bool Arrow::add_arg_type(ExprNode* arg_type) {
 
         return true;
     }
-    warn("trying to assing self to an arrow argument");
+    kwwarn(outlog(), "trying to adding self to an arrow argument");
     return false;
 }
 
@@ -220,9 +233,78 @@ bool Arrow::set_arg_type(int i, ExprNode* arg_type) {
         return true;
     }
 
-    warn("trying to assing self to an arrow argument");
+    kwwarn(outlog(), "trying to assing self to an arrow argument");
     return false;
 }
 
+
+template<typename T, typename Fun>
+void static_visit(T* self, Fun fun) {
+    using ArgumentIter_t = ArgumentIter<std::is_const_v<T>>;
+    using Epxr_t = typename std::conditional<std::is_const_v<T>, ExprNode const*, ExprNode*>::type;
+    using Arg_t = typename std::conditional<std::is_const_v<T>, Arg const&, Arg&>::type;
+
+
+    int i = 0;
+    int default_offset = int(self->defaults.size()) - (
+        self->posonlyargs.size() + self->args.size());
+
+    auto getdefault = [&]() -> int{
+        return default_offset + i;
+    };
+    
+    for(Arg_t posonly: self->posonlyargs) {
+        Epxr_t value = nullptr;
+        auto offset = getdefault();
+        if (offset >= 0 && offset < self->defaults.size()) {
+            value = self->defaults[offset];
+        }
+        fun(ArgumentIter_t{ArgumentKind::PosOnly, posonly, value});
+        i += 1;
+    }
+
+    for(Arg_t arg: self->args) {
+        Epxr_t value = nullptr;
+        
+        auto offset = getdefault();
+        if (offset >= 0 && offset < self->defaults.size()) {
+            value = self->defaults[offset];
+        }
+        fun(ArgumentIter_t{ArgumentKind::Regular, arg, value});
+        i += 1;
+    }
+
+    if (self->vararg.has_value()) {
+        fun(ArgumentIter_t{ArgumentKind::VarArg, self->vararg.value(), nullptr});
+        i += 1;
+    }
+
+    int kw = 0;
+    for(Arg_t kwonlyarg: self->kwonlyargs) {
+        Epxr_t value = nullptr;
+
+        auto offset = int(self->kw_defaults.size()) - int(self->kwonlyargs.size()) + kw;
+        if (offset >= 0 && offset < self->kw_defaults.size()) {
+            value = self->kw_defaults[offset];
+        }
+
+        fun(ArgumentIter_t{ArgumentKind::KwOnly, kwonlyarg, value});
+        i += 1;
+        kw += 1;
+    }
+
+        if (self->kwarg.has_value()) {
+        fun(ArgumentIter_t{ArgumentKind::KwArg, self->kwarg.value(), nullptr});
+        i += 1;
+    }
+}
+
+
+    void Arguments::visit(std::function<void(ArgumentIter<false> const&)> fun) {
+        static_visit(this, fun);
+    }
+    void Arguments::visit(std::function<void(ArgumentIter<true> const&)> fun) const {
+        static_visit(this, fun);
+    }
 // ------------------------------------------
 }  // namespace lython

@@ -1,20 +1,20 @@
 #include "lexer/buffer.h"
 
+#if __linux__
 #define __STDC_WANT_LIB_EXT1__   1
 #define __STDC_WANT_SECURE_LIB__ 1
+#endif
 
 #include <cstdio>
-
-#ifndef __linux__
-#    define __STDC_LIB_EXT1__ 1
-#endif
+#include <cstdlib>
+#include <iostream>
 
 namespace lython {
 
 FILE* internal_fopen(String filename) {
     FILE* file;
 
-#if (defined __STDC_LIB_EXT1__) && __STDC_LIB_EXT1__
+#if (defined __STDC_LIB_EXT1__) || BUILD_WINDOWS
     auto err = fopen_s(&file, filename.c_str(), "r");
     if (err != 0) {
         throw FileError("{}: File `{}` does not exist", filename);
@@ -71,6 +71,37 @@ StringBuffer::~StringBuffer() {}
 
 ConsoleBuffer::~ConsoleBuffer() {}
 
+char ConsoleBuffer::getc() {
+    if (i < buffer.size()) {
+        int o = i;
+        i += 1;
+        return buffer[o];
+    }
+    on_next_line();
+    fetch_next_line();
+    return getc();
+}
+
+void ConsoleBuffer::fetch_next_line() {
+    buffer.clear();
+    i = 0;
+    buffer.reserve(128);
+
+    int  k = 0;
+    char c;
+    do {
+        c = std::getchar();
+        buffer.push_back(c);
+        k += 1;
+    } while (c != '\n' && c != EOF);
+    buffer.push_back('\n');
+
+    if (filter(buffer)) {
+        buffer.clear();
+        return;
+    }
+}
+
 String read_file(String const& name) {
     FILE* file = internal_fopen(name);
 
@@ -101,7 +132,7 @@ String read_file(String const& name) {
         start += segment.size();
     }
 
-    debug("read {}", aggregated);
+    kwdebug(outlog(), "read {}", aggregated);
     return aggregated;
 }
 

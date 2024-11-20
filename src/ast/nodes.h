@@ -3,14 +3,19 @@
 
 #include <memory>
 
+#include "kmeta.h"
 #include "ast/nodekind.h"
-#include "constant.h"
 #include "dtypes.h"
 #include "lexer/token.h"
 #include "logging/logging.h"
 #include "utilities/names.h"
 #include "utilities/object.h"
 #include "utilities/optional.h"
+#include "values/value.h"
+
+
+
+
 
 namespace lython {
 
@@ -24,13 +29,18 @@ enum class NodeFamily : int8_t
     Statement,
     Expression,
     Pattern,
+    VM,
 };
 
+
 // col_offset is the byte offset in the utf8 string the parser uses
+KSTRUCT(a) 
 struct CommonAttributes {
     int           lineno     = -2;
     int           col_offset = -2;
     Optional<int> end_lineno;
+
+    KPROPERTY(b) 
     Optional<int> end_col_offset;
 };
 
@@ -46,7 +56,7 @@ NodeKind nodekind() {
 }
 
 struct Node: public GCObject {
-    String __str__() const;
+    // String __str__() const;
 
     Node(NodeKind _kind): kind(_kind) {}
 
@@ -59,6 +69,8 @@ struct Node: public GCObject {
         return kind == nodekind<T>();
     }
 
+    virtual bool is_leaf() = 0;
+
     Node const* get_parent() const { return static_cast<Node*>(get_gc_parent()); }
 };
 
@@ -66,12 +78,16 @@ struct ModNode: public Node {
     ModNode(NodeKind kind): Node(kind) {}
 
     NodeFamily family() const override { return NodeFamily::Module; }
+
+    bool is_leaf() override { return false; }
 };
 
 struct Comment;
 
 struct StmtNode: public CommonAttributes, public Node {
     StmtNode(NodeKind kind): Node(kind) {}
+
+    bool is_leaf() override { return false; }
 
     NodeFamily family() const override { return NodeFamily::Statement; }
 
@@ -99,6 +115,8 @@ struct ExprNode: public CommonAttributes, public Node {
     ExprNode(NodeKind kind): Node(kind) {}
 
     NodeFamily family() const override { return NodeFamily::Expression; }
+
+    bool is_leaf() override { return false; }
 };
 
 enum class ConversionKind : int8_t
@@ -196,12 +214,14 @@ enum class ExprContext : int8_t
 {
     Load,
     Store,
+    LoadStore,
     Del
 };
-void print(BoolOperator const&, std::ostream& out);
-void print(BinaryOperator const&, std::ostream& out);
-void print(CmpOperator const&, std::ostream& out);
-void print(UnaryOperator const&, std::ostream& out);
+
+std::ostream& operator<<(std::ostream& out, UnaryOperator const& v) ;
+std::ostream& operator<<(std::ostream& out, BinaryOperator const& v) ;
+std::ostream& operator<<(std::ostream& out, BoolOperator const& v) ;
+std::ostream& operator<<(std::ostream& out, CmpOperator const& v) ;
 
 // stp
 StringRef operator_magic_name(BoolOperator const& v, bool reverse = false);
@@ -214,7 +234,7 @@ struct Comprehension {
     ExprNode*        target = nullptr;
     ExprNode*        iter   = nullptr;
     Array<ExprNode*> ifs;
-    int              is_async : 1;
+    int              is_async; // : 1;
 };
 
 struct ExceptHandler: public CommonAttributes {
@@ -225,9 +245,29 @@ struct ExceptHandler: public CommonAttributes {
 };
 
 struct Arg: public CommonAttributes {
-    Identifier          arg;
+    Identifier          arg = Identifier();
     Optional<ExprNode*> annotation;
     Optional<String>    type_comment;
+};
+
+
+enum class ArgumentKind {
+    PosOnly,
+    Regular,
+    KwOnly,
+    VarArg,
+    KwArg,
+    None,
+};
+
+template<bool IsConst>
+struct ArgumentIter {
+    using Epxr_t = typename std::conditional<IsConst, ExprNode const*, ExprNode*>::type;
+    using Arg_t = typename std::conditional<IsConst, Arg const&, Arg&>::type;
+
+    ArgumentKind kind;
+    Arg_t arg;
+    Epxr_t value;
 };
 
 struct Arguments {
@@ -237,13 +277,44 @@ struct Arguments {
 
     Array<Arg>       posonlyargs;
     Array<Arg>       args;
-    Optional<Arg>    vararg;  // *args
+    Optional<Arg>    vararg;  // *args      -> This could be resolved at the call site
     Array<Arg>       kwonlyargs;
     Array<ExprNode*> kw_defaults;
-    Optional<Arg>    kwarg;  // **kwargs
+    Optional<Arg>    kwarg;  // **kwargs    -> This could be resolved at the call site
     Array<ExprNode*> defaults;
 
+    // we should probably have some structure to record the resolved variadic arguments
+    // could be a superset here
+    // or maybe generate some code for a subset at the call site
+
+    // f(*args, **kwargs) <= This is just forward the arguments as is
+    bool is_forward() {
+        return posonlyargs.size() == 0 && args.size() == 0 && 
+            vararg.has_value() && kwonlyargs.size() == 0 &&
+            kw_defaults.size() == 0 && kwarg.has_value() && defaults.size() == 0;
+    }
+
+    bool is_variadic() {
+        return vararg.has_value() || kwarg.has_value();
+    }
+
     int size() const { return int(posonlyargs.size() + args.size() + kwonlyargs.size()); }
+
+    // template<typename Fun>
+    // void visit(Fun fun) {
+    //     static_visit(this, fun);
+    // }
+
+    // template<typename Fun>
+    // void visit(Fun fun) const {
+    //     static_visit(this, fun);
+    // }
+
+    KIGNORE()
+    void visit(std::function<void(ArgumentIter<false> const&)> fun); 
+
+    KIGNORE()
+    void visit(std::function<void(ArgumentIter<true> const&)> fun) const;
 };
 
 struct Keyword: public CommonAttributes {
@@ -271,6 +342,8 @@ struct Pattern: public CommonAttributes, public Node {
     Pattern(NodeKind kind): Node(kind) {}
 
     NodeFamily family() const override { return NodeFamily::Pattern; }
+
+    bool is_leaf() override { return false; }
 };
 
 struct MatchValue: public Pattern {
@@ -280,7 +353,14 @@ struct MatchValue: public Pattern {
 };
 
 struct MatchSingleton: public Pattern {
-    ConstantValue value;
+    Value value;
+    ValueDeleter deleter = nullptr;
+
+    ~MatchSingleton() {
+        if (deleter) {
+            deleter(nullptr, value);
+        }
+    }
 
     MatchSingleton(): Pattern(NodeKind::MatchSingleton) {}
 };
@@ -352,13 +432,40 @@ struct Comment: public ExprNode {
 };
 
 struct Constant: public ExprNode {
-    ConstantValue    value;
+    Value        value;
+    ValueDeleter deleter = nullptr;
     Optional<String> kind;
 
     template <typename T>
-    Constant(T const& v): ExprNode(NodeKind::Constant), value(v) {}
+    Constant(T const& v): ExprNode(NodeKind::Constant)
+    {
+        value = make_value<T>(v);
+        // kwassert(deleter != nullptr, "deleter needs to be valid");
+    }
 
-    Constant(): Constant(ConstantValue::invalid_t()) {}
+    Constant(Value v): ExprNode(NodeKind::Constant), value(v)
+    {
+    }
+
+    Constant(): ExprNode(NodeKind::Constant){}
+
+    ~Constant() {
+        if (deleter) {
+            deleter(nullptr, value);
+        }
+        deleter = nullptr;
+    }
+
+    bool is_leaf() { return true; }
+};
+
+// Dummy, expression representing a value to be pluged at runtime
+struct Placeholder: public ExprNode {
+    Placeholder(): ExprNode(NodeKind::Placeholder) {}
+
+    ExprNode* expr;
+
+    bool is_leaf() { return true; }
 };
 
 /*
@@ -377,8 +484,6 @@ struct Constant: public ExprNode {
         type_ignores=[])
  */
 struct BoolOp: public ExprNode {
-    using NativeBoolyOp = ConstantValue (*)(ConstantValue const&, ConstantValue const&);
-
     BoolOperator     op;
     Array<ExprNode*> values;
 
@@ -388,24 +493,37 @@ struct BoolOp: public ExprNode {
 
     // Function to apply, resolved by the sema
     StmtNode*     resolved_operator = nullptr;
-    NativeBoolyOp native_operator   = nullptr;
+    Function      native_operator   = nullptr;
     int           varid             = -1;
 
     BoolOp(): ExprNode(NodeKind::BoolOp) {}
+
+    bool safe_value_add(ExprNode* value) {
+        if (value == this) {
+            return false;
+        }
+
+        for (auto& expr: values) {
+            if (value == expr) {
+                return false;
+            }
+        }
+
+        values.push_back(value);
+        return true;
+    }
 };
 
 // need sequences for compare to distinguish between
 // x < 4 < 3 and (x < 4) < 3
 struct Compare: public ExprNode {
-    using NativeCompOp = ConstantValue (*)(ConstantValue const&, ConstantValue const&);
-
     ExprNode*          left = nullptr;
     Array<CmpOperator> ops;
     Array<ExprNode*>   comparators;
 
     // Function to apply, resolved by the sema
-    Array<StmtNode*>    resolved_operator;
-    Array<NativeCompOp> native_operator;
+    Array<StmtNode*> resolved_operator;
+    Array<Function>  native_operator;
 
     bool safe_comparator_add(ExprNode* comp) {
         if (comp == this) {
@@ -430,32 +548,30 @@ struct NamedExpr: public ExprNode {
     ExprNode* value  = nullptr;
 
     NamedExpr(): ExprNode(NodeKind::NamedExpr) {}
+
+    bool is_leaf() override { return true; }
 };
 
 struct BinOp: public ExprNode {
-    using NativeBinaryOp = ConstantValue (*)(ConstantValue const&, ConstantValue const&);
-
     ExprNode*      left = nullptr;
     BinaryOperator op;
     ExprNode*      right = nullptr;
 
     // Function to apply, resolved by the sema
     StmtNode*      resolved_operator = nullptr;
-    NativeBinaryOp native_operator   = nullptr;
+    Function       native_operator   = nullptr;
     int            varid             = -1;
 
     BinOp(): ExprNode(NodeKind::BinOp) {}
 };
 
 struct UnaryOp: public ExprNode {
-    using NativeUnaryOp = ConstantValue (*)(ConstantValue const&);
-
     UnaryOperator op;
     ExprNode*     operand;
 
     // Function to apply, resolved by the sema
-    StmtNode*     resolved_operator = nullptr;
-    NativeUnaryOp native_operator   = nullptr;
+    StmtNode* resolved_operator = nullptr;
+    Function  native_operator   = nullptr;
 
     UnaryOp(): ExprNode(NodeKind::UnaryOp) {}
 };
@@ -541,6 +657,9 @@ struct Call: public ExprNode {
     ExprNode*        func = nullptr;
     Array<ExprNode*> args;
     Array<Keyword>   keywords;
+    Array<ExprNode*> varargs;
+
+    int jump_id = -1;
 
     Call(): ExprNode(NodeKind::Call) {}
 };
@@ -555,21 +674,9 @@ struct FormattedValue: public ExprNode {
     ExprNode*                value      = nullptr;
     Optional<ConversionKind> conversion = ConversionKind::None;
     // defined as ExprNode*
-    JoinedStr format_spec;
+    JoinedStr* format_spec;
 
     FormattedValue(): ExprNode(NodeKind::FormattedValue) {}
-};
-
-// the following expression can appear in assignment context
-struct Attribute: public ExprNode {
-    ExprNode*   value = nullptr;
-    Identifier  attr;
-    ExprContext ctx;
-
-    // SEMA
-    int attrid = 0;
-
-    Attribute(): ExprNode(NodeKind::Attribute) {}
 };
 
 struct Subscript: public ExprNode {
@@ -591,14 +698,15 @@ struct Name: public ExprNode {
     Identifier  id;
     ExprContext ctx;
 
-    // Variable id, resolved by SEMA
-    int  varid   = -1;
-    int  size    = -1;     // size of the context when it was defined
-    int  offset  = -1;     // reverse offset to use for lookup
-    bool dynamic = false;  // if true we will do a reverse lookup to take into account that
-                           // recursive call make the binding table offset
+    // A bit redundant when it comes to AnnAssign
+    ExprNode* type = nullptr;
+
+    int store_id = -1;
+    int load_id  = -1;
 
     Name(): ExprNode(NodeKind::Name) {}
+
+    bool is_leaf() override { return true; }
 };
 
 struct ListExpr: public ExprNode {
@@ -612,6 +720,9 @@ struct TupleExpr: public ExprNode {
     Array<ExprNode*> elts;
     ExprContext      ctx;
 
+    struct TupleType* type = nullptr;
+
+    // We need the typing of the tuple
     TupleExpr(): ExprNode(NodeKind::TupleExpr) {}
 };
 
@@ -630,6 +741,8 @@ struct Module: public ModNode {
     Array<StmtNode*> body;
 
     Optional<String> docstring;
+
+    struct FunctionDef* __init__ = nullptr;
 
     Module(): ModNode(NodeKind::Module) {}
 };
@@ -677,7 +790,7 @@ struct Decorator {
     ExprNode* expr    = nullptr;
     Comment*  comment = nullptr;
 
-    Decorator(ExprNode* deco, Comment* com = nullptr): expr(deco), comment(com) {}
+    Decorator(ExprNode* deco=nullptr, Comment* com = nullptr): expr(deco), comment(com) {}
 };
 
 struct Docstring {
@@ -696,16 +809,22 @@ struct FunctionDef: public StmtNode {
     String              type_comment;
     Optional<Docstring> docstring;
 
-    bool async : 1;
+    bool async; // : 1;
     // SEMA
-    bool          generator : 1;
+    bool          generator;// : 1;
     struct Arrow* type = nullptr;
+
+    Function native = nullptr;
 
     FunctionDef(): StmtNode(NodeKind::FunctionDef), async(false), generator(false) {}
 };
 
 struct AsyncFunctionDef: public FunctionDef {};
 
+// This is the AST declaration
+// To be able to instantiate an instance of the class we should generate
+// a TypeInfo/ClassMetadata
+// This is what will enable us to create generate struct and access their members
 struct ClassDef: public StmtNode {
     Identifier          name;
     Array<ExprNode*>    bases;
@@ -713,6 +832,9 @@ struct ClassDef: public StmtNode {
     Array<StmtNode*>    body;
     Array<Decorator>    decorator_list = {};
     Optional<Docstring> docstring;
+    int                 type_id = -1;
+
+    Arrow* ctor_t = nullptr;
 
     ClassDef(): StmtNode(NodeKind::ClassDef) {}
 
@@ -736,11 +858,15 @@ struct ClassDef: public StmtNode {
 
         operator bool() { return name != StringRef(); }
 
+        KIGNORE()
         void dump(std::ostream& out);
     };
     // Dict<StringRef, Attr> attributes;
-    Array<Attr> attributes;
+    Array<Attr> attributes;  // <= Instantiated Object
+    // Array<Attr> static_attributes;  // <= Namespaced Globals
+    // Array<Attr> methods;
 
+    KIGNORE()
     void dump(std::ostream& out) {
         out << "Attributes:\n";
         for (auto& item: attributes) {
@@ -764,7 +890,7 @@ struct ClassDef: public StmtNode {
         return -1;
     }
 
-    bool insert_attribute(StringRef name, StmtNode* stmt, ExprNode* type = nullptr) {
+    bool insert_method(StringRef name, StmtNode* stmt = nullptr, ExprNode* type = nullptr) {
         int attrid = get_attribute(name);
 
         if (attrid == -1) {
@@ -780,6 +906,46 @@ struct ClassDef: public StmtNode {
 
         return false;
     }
+
+    bool insert_attribute(StringRef name, StmtNode* stmt = nullptr, ExprNode* type = nullptr) {
+        int attrid = get_attribute(name);
+
+        if (attrid == -1) {
+            attributes.emplace_back(name, int(attributes.size()), stmt, type);
+            return true;
+        }
+
+        Attr& v = attributes[attrid];
+
+        if (v.type == nullptr && type != nullptr) {
+            v.type = type;
+        }
+
+        return false;
+    }
+};
+
+// the following expression can appear in assignment context
+struct Attribute: public ExprNode {
+    ExprNode*   value = nullptr;
+    Identifier  attr;
+    ExprContext ctx;
+
+    // Node* resolved = nullptr;
+    ClassDef::Attr* resolved = nullptr;
+
+    // SEMA
+    int attrid = 0;
+
+    Attribute(): ExprNode(NodeKind::Attribute) {}
+};
+
+struct Exported: public ExprNode {
+    Exported(): ExprNode(NodeKind::Exported) {}
+
+    struct Bindings* source;
+    struct Bindings* dest;
+    Node*            node;
 };
 
 struct Return: public StmtNode {
@@ -808,15 +974,13 @@ struct Assign: public StmtNode {
 };
 
 struct AugAssign: public StmtNode {
-    using NativeBinaryOp = ConstantValue (*)(ConstantValue const&, ConstantValue const&);
-
     ExprNode*      target = nullptr;
     BinaryOperator op;
     ExprNode*      value = nullptr;
 
     // Function to apply, resolved by the sema
     StmtNode*      resolved_operator = nullptr;
-    NativeBinaryOp native_operator   = nullptr;
+    Function       native_operator   = nullptr;
 
     AugAssign(): StmtNode(NodeKind::AugAssign) {}
 };
@@ -944,12 +1108,15 @@ struct Expr: public StmtNode {
     ExprNode* value = nullptr;
 
     Expr(): StmtNode(NodeKind::Expr) {}
+
+    bool is_leaf() override { return value && value->is_leaf(); }
 };
 
 struct Pass: public StmtNode {
 
     Pass(): StmtNode(NodeKind::Pass) {}
 };
+
 
 struct Break: public StmtNode {
 
@@ -997,7 +1164,7 @@ struct Arrow: public ExprNode {
     Dict<StringRef, bool> defaults;  //
     ExprNode*             returns = nullptr;
 
-    int arg_count() const { return args.size(); }
+    int arg_count() const { return int(args.size()); }
 
     Array<ExprNode*> args;
 };
@@ -1028,16 +1195,68 @@ struct TupleType: public ExprNode {
 };
 
 struct BuiltinType: public ExprNode {
-    using NativeFunction = ConstantValue (*)(Array<Constant*> const& args);
-    using NativeMacro    = ExprNode* (*)(Array<Node*> const& args);
+    // using NativeFunction = Constant* (*)(GCObject* root, Array<Constant*> const& args);
+    using NativeMacro = ExprNode* (*)(GCObject* root, Array<Node*> const& args);
 
-    BuiltinType(): ExprNode(NodeKind::BuiltinType), native_function(nullptr) {}
+    BuiltinType(): ExprNode(NodeKind::BuiltinType) {}
     StringRef name;
 
+    NativeMacro native_macro;
+};
+
+
+
+struct VMNode: public Node {
+    VMNode(NodeKind kind):
+        Node(kind)
+    {}
+
+    bool is_leaf() override {
+        return false;
+    }
+
+    NodeFamily family() const override { return NodeFamily::VM; }
+};
+
+struct VMStmt: public VMNode {
+    VMStmt(): VMNode(NodeKind::VMStmt) {}
+    StmtNode* stmt = nullptr;
+};
+
+struct CondJump: public VMNode {
+    CondJump(): VMNode(NodeKind::CondJump) {}
+
+    ExprNode* condition = nullptr;
+    int then_jmp = -1;
+    int else_jmp = -1;
+};
+
+struct Jump: public VMNode {
+    Jump(): VMNode(NodeKind::Jump) {}
+
+    int destination = -1;
+};
+
+struct VMNativeFunction: public VMNode {
+    VMNativeFunction(): VMNode(NodeKind::VMNativeFunction) {}
+
+    Function fun;
+};
+
+/*
+struct FunctionNative: public StmtNode {
+    using WrappedNativeFunction = std::function<Constant*(GCObject*, Array<Constant*> const&)>;
+    using NativeFunction = WrappedNativeFunction;
+
+    FunctionNative():
+        ExprNode(NodeKind::FunctionNative)
+    {}
+
+    StringRef name;
     // Maybe I need a native function Expr/Stmt instead ?
     NativeFunction native_function;
-    NativeMacro    native_macro;
 };
+*/
 
 // we need that to convert ClassDef which is a statement
 // into an expression
@@ -1064,8 +1283,9 @@ struct ClassType: public ExprNode {
 #define STMT(name, _)  SPECGEN(name)
 #define MOD(name, _)   SPECGEN(name)
 #define MATCH(name, _) SPECGEN(name)
+#define VM(name, _)    SPECGEN(name)
 
-NODEKIND_ENUM(X, SSECTION, EXPR, STMT, MOD, MATCH)
+NODEKIND_ENUM(X, SSECTION, EXPR, STMT, MOD, MATCH, VM)
 
 #undef X
 #undef SSECTION
@@ -1073,6 +1293,7 @@ NODEKIND_ENUM(X, SSECTION, EXPR, STMT, MOD, MATCH)
 #undef STMT
 #undef MOD
 #undef MATCH
+#undef VM
 
 #undef SPECGEN
 
@@ -1101,8 +1322,9 @@ T const* cast(Node const* obj) {
 
 template <typename T>
 T* checked_cast(Node* obj) {
-    assert(obj->is_instance<T>(),
-           fmt::format("Cast type is not compatible {} != {}", str(obj->kind), str(nodekind<T>())));
+    lyassert(
+        obj->is_instance<T>(),
+        fmt::format("Cast type is not compatible {} != {}", str(obj->kind), str(nodekind<T>())));
     return cast<T>(obj);
 }
 

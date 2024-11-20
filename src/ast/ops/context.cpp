@@ -20,6 +20,7 @@ struct Traverse: public BaseVisitor<Traverse, false, TraverseTrait> {
     using Super = BaseVisitor<Traverse, false, TraverseTrait>;
 
     virtual void_t boolop(BoolOp* n, int depth) { return void_t(); }
+    virtual void_t exported(Exported* n, int depth) { return void_t(); }
     virtual void_t namedexpr(NamedExpr* n, int depth) { return void_t(); }
     virtual void_t binop(BinOp* n, int depth) { return void_t(); }
     virtual void_t unaryop(UnaryOp* n, int depth) { return void_t(); }
@@ -39,18 +40,19 @@ struct Traverse: public BaseVisitor<Traverse, false, TraverseTrait> {
     virtual void_t joinedstr(JoinedStr* n, int depth) { return void_t(); }
     virtual void_t formattedvalue(FormattedValue* n, int depth) { return void_t(); }
     virtual void_t constant(Constant* n, int depth) { return void_t(); }
+    virtual void_t placeholder(Placeholder_t* n, int depth) {return void_t(); } 
     virtual void_t attribute(Attribute* n, int depth) { return void_t(); }
     virtual void_t subscript(Subscript* n, int depth) { return void_t(); }
     virtual void_t starred(Starred* n, int depth) { return void_t(); }
     virtual void_t name(Name* n, int depth) { return void_t(); }
     virtual void_t listexpr(ListExpr* n, int depth) {
-        for (auto i: n->elts) {
+        for (auto* i: n->elts) {
             Super::exec(i, depth);
         }
         return void_t();
     }
     virtual void_t tupleexpr(TupleExpr* n, int depth) {
-        for (auto i: n->elts) {
+        for (auto* i: n->elts) {
             Super::exec(i, depth);
         }
         return void_t();
@@ -95,6 +97,14 @@ struct Traverse: public BaseVisitor<Traverse, false, TraverseTrait> {
     virtual void_t matchstar(MatchStar* n, int depth) { return void_t(); }
     virtual void_t matchas(MatchAs* n, int depth) { return void_t(); }
     virtual void_t matchor(MatchOr* n, int depth) { return void_t(); }
+
+    virtual void_t module(Module* n, int depth) { return void_t(); }
+    virtual void_t interactive(Interactive* n, int depth) { return void_t(); }
+    virtual void_t functiontype(FunctionType* n, int depth) { return void_t(); }
+    virtual void_t comment(Comment* n, int depth) { return void_t(); }
+    virtual void_t invalidstmt(InvalidStatement* n, int depth) { return void_t(); }
+    virtual void_t expression(Expression* n, int depth) { return void_t(); }
+    // virtual void_t condjump(CondJump_t* n, int depth) { return void_t(); }
 };
 
 struct SetContext: public Traverse {
@@ -134,10 +144,9 @@ struct SetContext: public Traverse {
 };
 
 void set_context(Node* n, ExprContext ctx) {
-    SetContext t;
-    t.ctx = ctx;
-    t.exec<void_t>(n, 0);
-    return;
+    SetContext ctx_visitor;
+    ctx_visitor.ctx = ctx;
+    ctx_visitor.exec<void_t>(n, 0);
 }
 
 }  // namespace lython

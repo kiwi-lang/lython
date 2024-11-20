@@ -28,3 +28,48 @@
 [submodule "dependencies/xxHash"]
 	path = dependencies/xxHash
 	url = https://github.com/Cyan4973/xxHash.git
+[submodule "dependencies/toolset/emsdk"]
+	path = dependencies/toolset/emsdk
+	url = https://github.com/emscripten-core/emsdk.git
+[submodule "dependencies/fmt"]
+	path = dependencies/fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "dependencies/zlib"]
+	path = dependencies/zlib
+	url = https://github.com/madler/zlib.git
+[submodule "dependencies/godot"]
+	path = dependencies/godot
+	url = https://github.com/godotengine/godot.git
+[submodule "dependencies/imgui"]
+	path = dependencies/imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "dependencies/implot"]
+	path = dependencies/implot
+	url = https://github.com/epezent/implot.git
+[submodule "dependencies/imgui-node-editor"]
+	path = dependencies/imgui-node-editor
+	url = https://github.com/thedmd/imgui-node-editor.git
+[submodule "dependencies/SDL"]
+	path = dependencies/SDL
+	url = https://github.com/libsdl-org/SDL.git
+[submodule "dependencies/backward-cpp"]
+	path = dependencies/backward-cpp
+	url = https://github.com/bombela/backward-cpp.git
+[submodule "dependencies/libuv"]
+	path = dependencies/libuv
+	url = https://github.com/libuv/libuv.git
+[submodule "dependencies/SDL_ttf"]
+	path = dependencies/SDL_ttf
+	url = https://github.com/libsdl-org/SDL_ttf.git
+[submodule "dependencies/flecs"]
+	path = dependencies/flecs
+	url = https://github.com/SanderMertens/flecs.git
+[submodule "dependencies/freetype"]
+	path = dependencies/freetype
+	url = https://gitlab.freedesktop.org/freetype/freetype.git
+[submodule "dependencies/wasm_webgpu"]
+	path = dependencies/wasm_webgpu
+	url = https://github.com/juj/wasm_webgpu.git
+[submodule "dependencies/webgpu-headers"]
+	path = dependencies/webgpu-headers
+	url = https://github.com/webgpu-native/webgpu-headers.git

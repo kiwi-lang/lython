@@ -1,9 +1,24 @@
 #include "sema/bindings.h"
-#include "ast/magic.h"
 #include "ast/ops.h"
+#include "utilities/printing.h"
 #include "utilities/strings.h"
 
 namespace lython {
+
+Bindings::Bindings() {
+    bindings.reserve(128);
+
+#define TYPE(name, native) add(String(#name), name##_t(), Type_t(), meta::type_id<native>());
+
+    BUILTIN_TYPES(TYPE)
+
+#undef TYPE
+
+    // Builtin constant
+    add(String("None"), None(), None_t());
+    add(String("True"), True(), bool_t());
+    add(String("False"), False(), bool_t());
+}
 
 std::ostream& print(std::ostream& out, int i, BindingEntry const& entry);
 
@@ -39,6 +54,34 @@ inline std::ostream& print(std::ostream& out, int i, BindingEntry const& entry) 
         out << fmt::format("    {:>40} | {:>20} | {}", "", "", frags[i]) << '\n';
     }
     return out;
+}
+
+// returns the varid it was inserted as
+int Bindings::add(StringRef const& name, Node* value, TypeExpr* type, int type_id) {
+    COZ_BEGIN("T::Bindings::add");
+
+    // It is possile the name is missing during edit
+    // lyassert(name != StringRef(), "Should have a name");
+    auto size = int(bindings.size());
+
+    bool dynamic = !nested;
+    bindings.push_back({name, value, type, type_id, size});
+
+    if (!nested) {
+        global_index += 1;
+    }
+
+    COZ_PROGRESS_NAMED("Bindings::add");
+    COZ_END("T::Bindings::add");
+    return size;
+}
+
+struct Name* Bindings::make_reference(Node* parent, StringRef const& name, ExprNode* type) {
+    Name* ref = parent->new_object<Name>();
+    ref->id   = name;
+    ref->ctx  = ExprContext::Load;
+    ref->type = type;
+    return ref;
 }
 
 }  // namespace lython

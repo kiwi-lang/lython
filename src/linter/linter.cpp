@@ -1,7 +1,7 @@
 #include "linter/linter.h"
-#include "ast/magic.h"
 #include "builtin/operators.h"
 #include "utilities/guard.h"
+#include "utilities/printing.h"
 #include "utilities/strings.h"
 
 namespace lython {
@@ -34,7 +34,7 @@ Node* LinterAnalyser::load_name(Name_t* n) {
 
     if (n->dynamic) {
         // Local variables | Arguments
-        assert(n->offset != -1, "Reference should have a reverse lookup offset");
+        lyassert(n->offset != -1, "Reference should have a reverse lookup offset");
         varid  = int(bindings.bindings.size()) - n->offset;
         result = bindings.get_value(varid);
     } else {

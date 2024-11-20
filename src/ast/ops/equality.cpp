@@ -2,6 +2,8 @@
 #include "ast/visitor.h"
 #include "logging/logging.h"
 
+#include "dependencies/formatter.h"
+
 namespace lython {
 
 // Equality Visitor
@@ -13,8 +15,10 @@ struct Equality {
         return a == b;
     }
 
+    bool exec(Exported const& a, Exported const& b) { return exec(a.node, b.node); }
+
     bool exec(MatchCase const& a, MatchCase const& b, int depth) {
-        trace(depth, "MatchCase");
+        kwtrace(outlog(), depth, "MatchCase");
         return exec(a.pattern, b.pattern, depth) && exec(a.guard, b.guard, depth) &&
                exec(a.body, b.body, depth);
     }
@@ -96,13 +100,15 @@ struct Equality {
             return exec(reinterpret_cast<ExprNode *>(a), reinterpret_cast<ExprNode *>(b), 0);
         case NodeFamily::Pattern:
             return exec(reinterpret_cast<Pattern *>(a), reinterpret_cast<Pattern *>(b), 0);
+        case NodeFamily::VM:
+            return false;
         }
         // clang-format on
         return false;
     }
 
     bool exec(ModNode* a, ModNode* b, int depth) {
-        trace(depth, "{}", str(a->kind));
+        kwtrace(outlog(), depth, "{}", str(a->kind));
 
         if (a->kind != b->kind) {
             return false;
@@ -119,7 +125,7 @@ struct Equality {
                     return fun(aa, bb, depth + 1);\
                 }
 
-            NODEKIND_ENUM(X, SECTION, PASS, PASS, MOD, PASS)
+            NODEKIND_ENUM(X, SECTION, PASS, PASS, MOD, PASS, PASS)
 
             #undef X
             #undef PASS
@@ -135,7 +141,7 @@ struct Equality {
     }
 
     bool exec(Pattern* a, Pattern* b, int depth) {
-        trace(depth, "{}", str(a->kind));
+        kwtrace(outlog(), depth, "{}", str(a->kind));
 
         if (a->kind != b->kind) {
             return false;
@@ -152,7 +158,7 @@ struct Equality {
                     return fun(aa, bb, depth + 1);\
                 }
 
-            NODEKIND_ENUM(X, SECTION, PASS, PASS, PASS, MATCH)
+            NODEKIND_ENUM(X, SECTION, PASS, PASS, PASS, MATCH, PASS)
 
             #undef X
             #undef PASS
@@ -173,7 +179,7 @@ struct Equality {
         if (a == nullptr || b == nullptr) {
             return false;
         }
-        trace(depth, "{}", str(a->kind));
+        kwtrace(outlog(), depth, "{}", str(a->kind));
 
         if (a->kind != b->kind) {
             return false;
@@ -190,7 +196,7 @@ struct Equality {
                     return fun(aa, bb, depth + 1);\
                 }
 
-            NODEKIND_ENUM(X, SECTION, EXPR, PASS, PASS, PASS)
+            NODEKIND_ENUM(X, SECTION, EXPR, PASS, PASS, PASS, PASS)
 
             #undef X
             #undef PASS
@@ -205,7 +211,7 @@ struct Equality {
     }
 
     bool exec(StmtNode* a, StmtNode* b, int depth) {
-        trace(depth, "{}", str(a->kind));
+        kwtrace(outlog(), depth, "{}", str(a->kind));
 
         if (a->kind != b->kind) {
             return false;
@@ -222,7 +228,7 @@ struct Equality {
                     return this->fun(aa, bb, depth + 1);\
                 }
 
-            NODEKIND_ENUM(X, SECTION, PASS, STMT, PASS, PASS)
+            NODEKIND_ENUM(X, SECTION, PASS, STMT, PASS, PASS, PASS)
 
             #undef X
             #undef PASS
@@ -272,7 +278,7 @@ struct Equality {
     }
 
     bool builtintype(BuiltinType* a, BuiltinType* b, int depth) {
-        debug("{} {} {}", a->name, b->name, exec(a->name, b->name, depth));
+        kwdebug(outlog(), "{} {} {}", a->name, b->name, exec(a->name, b->name, depth));
         return exec(a->name, b->name, depth);
     }
     bool functiondef(FunctionDef* a, FunctionDef* b, int depth) {
@@ -301,7 +307,26 @@ struct Equality {
 
     bool invalidstmt(InvalidStatement* a, InvalidStatement* b, int depth) { return false; }
 
-    bool constant(Constant* a, Constant* b, int depth) { return a->value == b->value; }
+    bool constant(Constant* a, Constant* b, int depth) {
+        static int string_tid = meta::type_id<String>();
+
+        if (a->value.tag == b->value.tag) {
+            if (a->value.tag < int(meta::ValueTypes::Max)) {
+                return a->value == b->value; 
+            }
+
+            // FIXME: implement this in the value operator==
+            if (a->value.tag == string_tid) {
+                String* stra = a->value.as<String*>();
+                String* strb = b->value.as<String*>();
+
+                return (*stra) == (*strb);
+            }
+        }
+
+        return false;
+    }
+
     bool exprstmt(Expr* a, Expr* b, int depth) { return exec(a->value, b->value, depth); }
     bool returnstmt(Return* a, Return* b, int depth) { return exec(a->value, b->value, depth); }
     bool await(Await* a, Await* b, int depth) { return exec(a->value, b->value, depth); }
@@ -309,6 +334,10 @@ struct Equality {
     bool yieldfrom(YieldFrom* a, YieldFrom* b, int depth) {
         return exec(a->value, b->value, depth);
     }
+
+    bool exported(Exported* a, Exported* b, int depth) { return exec(a->node, b->node, depth); }
+
+    bool condjump(CondJump* a, CondJump* b, int depth) { return exec(a->condition, b->condition, depth); }
 
     bool boolop(BoolOp* a, BoolOp* b, int depth) {
         return a->op == b->op && exec(a->values, b->values, depth);
@@ -359,8 +388,10 @@ struct Equality {
         return exec(a->values, b->values, depth);
     }
     bool formattedvalue(FormattedValue* a, FormattedValue* b, int depth) {
-        return exec(a->value, b->value, depth) && exec(a->conversion, b->conversion, depth) &&
-               exec(a->format_spec, b->format_spec, depth);
+        return true                                                          //
+            && exec(a->value, b->value, depth)                               //
+            && exec(a->conversion, b->conversion, depth)                     //
+            && exec(a->format_spec->values, b->format_spec->values, depth);  //
     }
     bool attribute(Attribute* a, Attribute* b, int depth) {
         return exec(a->value, b->value, depth) && exec(a->attr, b->attr, depth) /* &&
@@ -489,6 +520,8 @@ struct Equality {
     bool matchor(MatchOr* a, MatchOr* b, int depth) {
         return exec(a->patterns, b->patterns, depth);
     }
+
+    bool placeholder(Placeholder* a, Placeholder* b, int depth) { return false; }
 };
 
 bool equal(Node* a, Node* b) {

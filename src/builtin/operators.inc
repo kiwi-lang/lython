@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ast/constant.h"
+#include "ast/values/value.h"
 #include <cmath>
 
 namespace lython {
@@ -15,10 +15,6 @@ struct UnaryOperation {
         T r;
         T a;
     };
-
-    static ConstantValue vm(ConstantValue const& a) {
-        return ConstantValue(Implementation::call(a.get<T>()));
-    }
 
     static void call(Params& params) { params.r = Implementation::call(params.a); }
 
@@ -77,10 +73,6 @@ struct BinaryOperation {
     };
 
     static void call(Params& params) { params.r = Implementation::call(params.a, params.b); }
-
-    static ConstantValue vm(ConstantValue const& a, ConstantValue const& b) {
-        return ConstantValue(Implementation::call(a.get<T>(), b.get<T>()));
-    }
 
     static T call(T a, T b) { return Implementation::call(a, b); }
 };
@@ -171,63 +163,59 @@ struct ComparisonOperation {
         T    b;
     };
 
-    static ConstantValue vm(ConstantValue const& a, ConstantValue const& b) {
-        return ConstantValue(Implementation::call(a.get<T>(), b.get<T>()));
-    }
-
     static void call(Params& params) { params.r = Implementation::call(params.a, params.b); }
 
-    static T call(T a, T b) { return Implementation::call(a, b); }
+    static bool call(T a, T b) { return Implementation::call(a, b); }
 };
 
 template <typename T>
 struct Eq: public ComparisonOperation<T, Eq<T>> {
-    static T call(T a, T b) { return a == b; }
+    static bool call(T a, T b) { return a == b; }
 };
 
 template <typename T>
 struct NotEq: public ComparisonOperation<T, NotEq<T>> {
-    static T call(T a, T b) { return a != b; }
+    static bool call(T a, T b) { return a != b; }
 };
 
 template <typename T>
 struct Lt: public ComparisonOperation<T, Lt<T>> {
-    static T call(T a, T b) { return a < b; }
+    static bool call(T a, T b) { return a < b; }
 };
 
 template <typename T>
 struct LtE: public ComparisonOperation<T, LtE<T>> {
-    static T call(T a, T b) { return a <= b; }
+    static bool call(T a, T b) { return a <= b; }
 };
 
 template <typename T>
 struct Gt: public ComparisonOperation<T, Gt<T>> {
-    static T call(T a, T b) { return a > b; }
+    static bool call(T a, T b) { return a > b; }
 };
 
 template <typename T>
 struct GtE: public ComparisonOperation<T, GtE<T>> {
-    static T call(T a, T b) { return a >= b; }
+    static bool call(T a, T b) { return a >= b; }
 };
 
 template <typename T>
 struct Is: public ComparisonOperation<T, Is<T>> {
-    static T call(T a, T b) { return a == b; }
+    static bool call(T a, T b) { return a == b; }
 };
 
 template <typename T>
 struct IsNot: public ComparisonOperation<T, IsNot<T>> {
-    static T call(T a, T b) { return a != b; }
+    static bool call(T a, T b) { return a != b; }
 };
 
 template <typename T>
 struct In: public ComparisonOperation<T, In<T>> {
-    static T call(T a, T b) { return a == b; }
+    static bool call(T a, T b) { return a == b; }
 };
 
 template <typename T>
 struct NotIn: public ComparisonOperation<T, NotIn<T>> {
-    static T call(T a, T b) { return a != b; }
+    static bool call(T a, T b) { return a != b; }
 };
 
 }  // namespace lython

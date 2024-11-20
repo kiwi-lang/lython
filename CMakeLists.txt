@@ -2,7 +2,9 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 3.9)
 
 # project name + language used
-PROJECT(lython CXX)
+PROJECT(lython C CXX)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # debug/release
 SET(CMAKE_RELEASE_POSTFIX "")
@@ -11,13 +13,13 @@ SET(CMAKE_DEBUG_POSTFIX "-debug")
 # Compiler-flag
 IF(${CMAKE_BUILD_TYPE} MATCHES "Debug")
     MESSAGE(STATUS "Building Debug Version")
-    ADD_DEFINITIONS(-O0)
 
     IF(UNIX)
+        ADD_DEFINITIONS(-O0)
         ADD_LINK_OPTIONS(-rdynamic)
     ENDIF(UNIX)
 ELSE()
-    MESSAGE(STATUS "Building Release Version")
+    MESSAGE(STATUS "Building Release Version: " ${CMAKE_BUILD_TYPE})
 
     # causes: nvcc fatal   : redefinition of argument 'optimize'
     # ADD_DEFINITIONS(-O2)
@@ -30,56 +32,96 @@ SET(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # add cmake FindXXX script to find pre-compiled libraries if any
 LIST(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+LIST(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/binaries/")
+MESSAGE(STATUS ${CMAKE_MODULE_PATH})
+INCLUDE(constant)
 
 # Project's Options
 # ====================================
 OPTION(BUILD_TESTING "Enable tests" ON)
+OPTION(BUILD_USING_CLANG "Enable with clang" OFF)
 OPTION(BUILD_BENCHMARKS "Build Benchmarks" ON)
 OPTION(BUILD_DOCUMENTATION "Build docs" OFF)
 OPTION(BUILD_DOXYGEN "Build Doxygen docs" ON)
 OPTION(BUILD_SPHINX "Build Sphinx docs" ON)
 OPTION(CLANG_TIDY "Run clang-tidy" OFF)
-OPTION(BUILD_WEBASSEMBLY "Webassembly" OFF)
 OPTION(WITH_VALGRIND "Disable mimalloc for better valgrind support" OFF)
 OPTION(WITH_COVERAGE "Enable coverage generation" ON)
 OPTION(WITH_LOG "Enable compiler log" ON)
 OPTION(WITH_COZ "Enable coz profiler" OFF)
+OPTION(NO_LLVM "Disable LLVM" OFF)
 
-IF(BUILD_WEBASSEMBLY)
-    # Looks like I have to use emacscripten
-    # maybe I could use things like:
-    # - https://github.com/WebAssembly/wasi-libc
-    #
-    # set(CMAKE_SYSTEM_NAME Linux)
-    # set(CMAKE_SYSTEM_PROCESSOR wasm32)
+IF(BUILD_USING_CLANG)
+    IF(WITH_COVERAGE)
+        ADD_COMPILE_OPTIONS(-fprofile-instr-generate -fcoverage-mapping)
+        LINK_LIBRARIES(-fprofile-instr-generate -fcoverage-mapping)
+    ENDIF()
+ENDIF()
 
-    # set(CMAKE_C_COMPILER clang)
-    # set(CMAKE_CXX_COMPILER clang++)
+# Identify Targets
+SET(BUILD_WEBASSEMBLY 0)
+SET(BUILD_POSIX 0)
+SET(BUILD_WINDOWS 0)
 
-    # set(triple)
-    # set(CMAKE_C_COMPILER_TARGET ${triple})
-    # set(CMAKE_CXX_COMPILER_TARGET ${triple})
+IF(CMAKE_CXX_COMPILER MATCHES "/em.*$")
+    MESSAGE(" * Platform: Emscripten")
+    SET(BUILD_WEBASSEMBLY 1)
 
-    # -Wall
-    # --target=wasm32
-    # -Os
-    # -flto
-    # -nostdlib
-    # -fvisibility=hidden
-    # -std=c++14
-    # -ffunction-sections
-    # -fdata-sections
-ENDIF(BUILD_WEBASSEMBLY)
+    # Disable not supported targets
+    SET(BUILD_TESTING OFF) #
+    SET(BUILD_BENCHMARKS OFF) #
+
+    # Disable not supported features
+    SET(WITH_COZ 0)
+    SET(WITH_COVERAGE 0)
+    SET(WITH_LOG 0)
+    SET(WITH_VALGRIND 1)
+ENDIF()
+
+IF(UNIX)
+    MESSAGE(" * Platform: Unix-Like")
+    SET(BUILD_POSIX 1)
+    SET(WITH_LOG 1)
+
+# export ASAN_OPTIONS=abort_on_error=1:halt_on_error=1
+# export UBSAN_OPTIONS=abort_on_error=1:halt_on_error=1
+# -fsanitize=address,undefined,thread -fsanitize-trap
+# -g3                                                       # Debug information
+
+# -Wall -Wextra -Wconversion -Wdouble-promotion -Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion
+ELSEIF(WIN32)
+    MESSAGE(" * Platform: Windows")
+    SET(BUILD_WINDOWS 1)
+    add_compile_options(/EHsc)
+    add_compile_options(/Z7)
+
+    # /RTCcsu
+    # /W4 /wd4146 /wd4245 /D_CRT_SECURE_NO_WARNINGS
+    # /Z7                                            <= Debug information embedded in binaries
+
+    # Disable not supported features
+    SET(WITH_COZ 0)
+    SET(WITH_COVERAGE 0)
+    SET(WITH_LOG 1)
+ENDIF()
 
 # Binary/pre-compiled Dependencies
 # ====================================
 
-# C++20 does not work as of Nov - 2022
-SET(CMAKE_CXX_STANDARD 17)
+# C++20 does not work for gcc & fmt as of Nov - 2022
+SET(LY_CXX_STANDARD 17)
+SET(CMAKE_CXX_STANDARD ${LY_CXX_STANDARD})
 SET(CXX_STANDARD_REQUIRED ON)
 
 # FIND_PACKAGE(Boost REQUIRED)
 FIND_PACKAGE(Git REQUIRED)
+FIND_PACKAGE(ZLIB)
+FIND_PACKAGE(argparse)
+FIND_PACKAGE(mimalloc)
+FIND_PACKAGE(fmt REQUIRED)
+FIND_PACKAGE(Catch2 REQUIRED)
+# FIND_PACKAGE(backtrace)
+
 
 # CMake Exentions
 # ====================================
@@ -87,6 +129,10 @@ FIND_PACKAGE(Git REQUIRED)
 # Find revision ID and hash of the sourcetree
 INCLUDE_DIRECTORIES(${CMAKE_BINARY_DIR})
 INCLUDE(genrev)
+
+MESSAGE(STATUS ${CMAKE_BUILD_TYPE} " " ${CMAKE_CONFIGURATION_TYPES})
+SET(LLVM_REQUESTED_BUILD_TYPE ${CMAKE_BUILD_TYPE})
+INCLUDE(ConfigureLLVM)
 
 IF(UNIX AND WITH_COVERAGE)
     INCLUDE(CodeCoverage)

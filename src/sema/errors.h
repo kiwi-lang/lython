@@ -4,6 +4,7 @@
 #include <ostream>
 
 #include "ast/nodes.h"
+#include "printer/error_printer.h"
 #include "sema/builtin.h"
 
 namespace lython {
@@ -12,7 +13,7 @@ struct SemaError {};
 
 StmtNode* get_parent_stmt(Node* node);
 
-struct SemaException: LythonException {
+struct SemaException: public LythonException {
     ExprNode* expr = nullptr;
     StmtNode* stmt = nullptr;
 
@@ -24,7 +25,7 @@ struct SemaException: LythonException {
 
     SemaException(): cached_message("") {}
 
-    virtual const char* what() const NOTHROW override final {
+    virtual const char* what() const LY_NOEXCEPT override final {
         generate_message();
         return cached_message.c_str();
     }
@@ -38,11 +39,11 @@ struct SemaException: LythonException {
     }
 
     void set_node(Node* node) {
-        if (node->family() == NodeFamily::Expression) {
+        if (node && node->family() == NodeFamily::Expression) {
             set_expr((ExprNode*)node);
         }
 
-        if (node->family() == NodeFamily::Statement) {
+        if (node && node->family() == NodeFamily::Statement) {
             set_stmt((StmtNode*)node);
         }
     }
@@ -179,26 +180,12 @@ struct ImportError: public SemaException {
     StringRef name;
 };
 
-struct SemaErrorPrinter {
+struct SemaErrorPrinter: public BaseErrorPrinter {
     SemaErrorPrinter(std::ostream& out, class AbstractLexer* lexer = nullptr):
-        out(out), lexer(lexer)  //
+        BaseErrorPrinter(out, lexer)  //
     {}
 
-    int  indent = 1;
     void print(SemaException const& err);
-
-    String        indentation() { return String(indent * 2, ' '); }
-    std::ostream& firstline() { return out; }
-    std::ostream& newline() { return out << std::endl << indentation(); }
-    std::ostream& errorline() { return out << std::endl; }
-
-    void underline(CommonAttributes const& attr);
-
-    std::ostream& codeline() { return out << std::endl << indentation() << indentation() << "|"; }
-    void          end() { out << std::endl; }
-
-    std::ostream&        out;
-    class AbstractLexer* lexer;
 };
 
 }  // namespace lython

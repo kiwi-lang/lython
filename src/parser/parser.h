@@ -1,13 +1,13 @@
 ﻿#ifndef LYTHON_PARSER_H
 #define LYTHON_PARSER_H
 
-#include "ast/magic.h"
 #include "ast/nodes.h"
 #include "dependencies/coz_wrap.h"
 #include "lexer/lexer.h"
 #include "logging/logging.h"
 #include "parser/parsing_error.h"
 #include "utilities/metadata.h"
+#include "utilities/printing.h"
 
 #include <iostream>
 #include <numeric>
@@ -54,10 +54,12 @@ class Parser {
     public:
     Parser(AbstractLexer& lexer): _lex(lexer) { metadata_init_names(); }
 
+    Logger& parsinglog = lython::outlog();
+
     ParsingError&
-    parser_error(lython::CodeLocation const& loc, String const& exception, String const& msg) {
+    parser_kwerror(lython::CodeLocation const& loc, String const& exception, String const& msg) {
         current_error += 1;
-        assert(current_error == errors.size(), "Only one error at a time can happen");
+        lyassert(current_error == errors.size(), "Only one error at a time can happen");
 
         auto& details          = errors.emplace_back(ParsingError());
         details.error_kind     = exception;
@@ -65,7 +67,7 @@ class Parser {
         details.loc            = loc;
         details.received_token = token();
 
-        lython::log(lython::LogLevel::Error, loc, "{}: {}", exception, msg);
+        parsinglog.log(lython::LogLevel::Error, loc, "{}: {}", exception, msg);
         return details;
     }
 
@@ -82,6 +84,13 @@ class Parser {
             // and raised to reach the parent block
             // this is the top level block no need to go further up
         }
+    }
+
+    // Stream API
+    StmtNode* next(Module* module) {
+        StmtNode* stmt = parse_one(module, 0);
+        module->body.push_back(stmt);
+        return stmt;
     }
 
     Module* parse_module() {
@@ -105,12 +114,16 @@ class Parser {
     Pattern* parse_match_mapping(Node* parent, int depth);
 
     Pattern* parse_match_or(Node* parent, Pattern* primary, int depth);
+    Pattern* parse_match_as_or_class(Node* parent, int depth);
+    Pattern* parse_match_as(Node* parent, int depth);
     Pattern* parse_match_as(Node* parent, Pattern* primary, int depth);
-    Pattern* parse_match_class(Node* parent, ExprNode* cls, int depth);
+    Pattern* parse_match_class(Node* parent, int depth);
 
     // Pattern Dispatch
     Pattern* parse_pattern(Node* parent, int depth);
     Pattern* parse_pattern_1(Node* parent, int depth);
+
+    StmtNode* parse_one(Node* parent, int depth, bool interactive = false);
 
     // Statement_1
     StmtNode* parse_function_def(Node* parent, bool async, int depth);
@@ -155,8 +168,12 @@ class Parser {
     ExprNode* parse_name(Node* parent, int depth);
     ExprNode* parse_lambda(Node* parent, int depth);
     ExprNode* parse_constant(Node* parent, int depth);
-    ExprNode* parse_joined_string(Node* parent, int depth);
     ExprNode* parse_ifexp_ext(Node* parent, int depth);
+
+    ExprNode*  parse_special_string(Node* parent, int depth);
+    ExprNode*  parse_joined_string(Node* parent, int depth);
+    ExprNode*  parse_formatted_value_string(Node* parent, int depth);
+    JoinedStr* parse_format_spec(Node* parent, int depth);
 
     ExprNode* parse_starred(Node* parent, int depth);
     ExprNode* parse_list(Node* parent, int depth);
@@ -203,8 +220,8 @@ class Parser {
 
     void end_code_loc(CommonAttributes* target, Token tok);
 
-    bool          is_valid_value();
-    ConstantValue get_value(Node* parent);
+    bool                       is_valid_value();
+    Value get_value(Node* parent);
 
     OpConfig const& get_operator_config(Token const& tok) const;
 
@@ -304,6 +321,8 @@ class Parser {
 
     public:
     int expression_depth = 0;
+
+    void clear_errors() { errors.clear(); }
 
     private:
     Array<StmtNode*>      _pending_comments;

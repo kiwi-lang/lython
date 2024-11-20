@@ -11,6 +11,8 @@
 #include "cli/commands/linter.h"
 #include "cli/commands/profile.h"
 #include "cli/commands/tests.h"
+#include "cli/commands/vm.h"
+#include "cli/commands/repl.h"
 
 #include "utilities/metadata.h"
 #include "utilities/names.h"
@@ -25,6 +27,16 @@ const char* VERSION_STRING = "\n"
                              "[0]    Version: " _HASH "\n"
                              "[0]       Date: " _DATE "\n\n";
 
+
+
+
+#ifndef BUILD_WEBASSEMBLY
+#define BUILD_WEBASSEMBLY 1
+#endif
+
+#if BUILD_WEBASSEMBLY
+
+#else
 int main(int argc, const char* argv[]) {
 
     auto linter   = std::make_unique<LinterCmd>();
@@ -36,6 +48,8 @@ int main(int argc, const char* argv[]) {
     auto profile  = std::make_unique<ProfileCmd>();
     auto tests    = std::make_unique<TestsCmd>();
     auto internal = std::make_unique<InternalCmd>();
+    auto vm       = std::make_unique<VMCmd>();
+    auto repl       = std::make_unique<ReplCmd>();
 
     // There is a problem when putting unique ptr inside the array :/
     Array<Command*> commands = {
@@ -48,6 +62,8 @@ int main(int argc, const char* argv[]) {
         profile.get(),
         tests.get(),
         internal.get(),
+        vm.get(),
+        repl.get(),
     };
 
     // Main Parser
@@ -102,3 +118,4 @@ int main(int argc, const char* argv[]) {
     std::cerr << lython_args;
     return -1;
 }
+#endif

@@ -1,9 +1,11 @@
 #include "pool.h"
-
+#include "logging/logging.h"
 #include <iostream>
-#include <spdlog/fmt/bundled/core.h>
 
 namespace lython {
+
+#if BUILD_WEBASSEMBLY
+#else
 
 void worker_loop(ThreadPool* pool, std::size_t n);
 
@@ -96,4 +98,5 @@ void worker_loop(ThreadPool* pool, std::size_t n) {
     }
 }
 
+#endif
 }  // namespace lython
